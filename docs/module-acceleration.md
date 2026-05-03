@@ -431,6 +431,48 @@ Before opening a PR for a new module:
 
 ---
 
+## 🎯 TODO: Company-Specific Standards & Guides
+
+This document provides a framework for module acceleration. To tailor it to your organisation, update it with:
+
+**Development Standards:**
+- [ ] Company naming conventions for resources, variables, locals, and outputs (e.g. CAF prefix, department tags)
+- [ ] Approved Azure services and resource types (allowlist/blocklist by team)
+- [ ] Tagging strategy — required tags, key formats, enforcement mechanism
+- [ ] Provider version pinning policy (e.g. "must pin azurerm ~> 3.90")
+- [ ] Module source structure requirements (e.g. modules/ directory layout, private registry naming)
+
+**Security & Compliance Standards:**
+- [ ] Mandatory security controls (e.g. encryption-at-rest, network isolation, managed identity requirements)
+- [ ] Network architecture standards (e.g. private endpoints mandatory, public access blocked)
+- [ ] Authentication/authorization patterns (e.g. RBAC, managed identities, Key Vault integration)
+- [ ] Audit logging requirements (e.g. diagnostics settings, monitoring expectations)
+- [ ] Compliance frameworks (e.g. CIS, PCI DSS, internal policies)
+- [ ] Data residency / sovereignty constraints
+
+**Code Quality Standards:**
+- [ ] Linter / formatter enforcement (e.g. checkov, tfsec rules, terraform fmt)
+- [ ] Documentation requirements beyond README (e.g. architecture diagrams, threat models)
+- [ ] Testing strategy (e.g. terratest, unit tests, integration tests)
+- [ ] Code review process and approval requirements
+- [ ] Version control workflow (e.g. branch naming, PR template, release process)
+
+**Operational Standards:**
+- [ ] State management requirements (remote state, locking, backup policy)
+- [ ] Workspace naming conventions and access control
+- [ ] Deployment pipeline workflow (e.g. plan approval, automated apply conditions)
+- [ ] Change management requirements (e.g. CAB approval, change windows)
+- [ ] Runbook / documentation standards for module troubleshooting
+
+**Links to Company Resources:**
+- [ ] Internal architecture decision records (ADRs)
+- [ ] Security policy documentation
+- [ ] Network design standards
+- [ ] Tagging taxonomy document
+- [ ] Approved provider versions (with EOL dates)
+
+---
+
 ## Related Resources
 
 - [HashiCorp Module Development Standards](https://developer.hashicorp.com/terraform/language/modules/develop)
