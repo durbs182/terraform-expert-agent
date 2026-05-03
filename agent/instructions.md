@@ -44,23 +44,24 @@ do not guess at provider APIs or module interfaces from memory.
 Never delegate a single MCP tool call to a subagent. Subagent overhead is 30-75 seconds.
 A direct bash call takes 3-5 seconds. **Always call the binary directly.**
 
-Use this reusable inline Python pattern for every MCP tool call:
+### Canonical Bash Template
+
+**CRITICAL**: Do NOT use `$(which ...)` or nested command substitutions — the bash tool's
+security filter blocks them. Use a plain variable assignment instead:
 
 ```bash
-TERRAFORM_MCP_SERVER="${TERRAFORM_MCP_SERVER:-$(which terraform-mcp-server 2>/dev/null || echo /Users/pauldurbin/bin/terraform-mcp-server)}" \
 /opt/homebrew/bin/python3.11 - << 'EOF'
-import asyncio, json, os, sys
+import asyncio, json, os, shutil, sys
 
-BINARY    = os.environ.get("TERRAFORM_MCP_SERVER", "terraform-mcp-server")
+BINARY    = os.environ.get("TERRAFORM_MCP_SERVER") or shutil.which("terraform-mcp-server") or "/Users/pauldurbin/bin/terraform-mcp-server"
 TFE_TOKEN = os.environ.get("TFE_TOKEN", "")
 TOOLSETS  = "all" if TFE_TOKEN else "registry"
 
 async def run():
-    env = {**os.environ}
     proc = await asyncio.create_subprocess_exec(
         BINARY, "stdio", f"--toolsets={TOOLSETS}", "--log-level=error",
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL, env=env)
+        stderr=asyncio.subprocess.DEVNULL, env=os.environ)
     _id = 0
 
     async def rpc(method, params, respond=True):
@@ -76,20 +77,22 @@ async def run():
                "clientInfo":{"name":"tf-expert","version":"1.0"}})
     await rpc("notifications/initialized", {}, respond=False)
 
-    # ---- TOOL CALL ----
+    # ---- TOOL CALL(S) — chain multiple rpc() calls here before terminate ----
     r = await rpc("tools/call", {"name": "TOOL_NAME", "arguments": {"key": "value"}})
-    # -------------------
+    # -------------------------------------------------------------------------
 
     proc.terminate()
-    for item in r.get("result",{}).get("content",[]):
+    for item in r.get("result", {}).get("content", []):
         if item.get("type") == "text": print(item["text"])
 
 asyncio.run(run())
 EOF
 ```
 
-To call multiple tools in one session, repeat the `rpc("tools/call", ...)` pattern
-before `proc.terminate()` — the subprocess stays alive between calls.
+### Key rules
+- Chain ALL related tool calls in ONE script (subprocess stays alive between calls)
+- For responses > 10KB, write output to a temp file: `import tempfile; f = tempfile.NamedTemporaryFile(...)` and print the path — then use `view` with `view_range` to read sections
+- Never probe `tools/list` to discover parameter names — use the parameter reference below
 
 ### When to Use Each Execution Method
 
@@ -139,11 +142,76 @@ workspace/resources are affected, potential risks, then ask for explicit **yes**
 
 ---
 
+## Registry Lookup Workflows — TWO-STEP (MANDATORY)
+
+`get_provider_details` and `get_module_details` require an opaque ID that **must be
+obtained from a search call first**. Never call them with a name directly.
+
+### Provider resource docs (e.g. "get azurerm storage docs")
+
+```
+Step 1 — search_providers → get provider_doc_id
+Step 2 — get_provider_details(provider_doc_id=<id from step 1>)
+```
+
+Chain both in ONE script. Required parameters for `search_providers`:
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `provider_name` | ✅ | e.g. `"azurerm"`, `"aws"`, `"google"` |
+| `provider_namespace` | ✅ | Usually `"hashicorp"` for official providers |
+| `service_slug` | ✅ | Single word or underscore-joined, e.g. `"storage_account"`, `"s3"` |
+| `provider_document_type` | ✅ | `"resources"` \| `"data-sources"` \| `"guides"` \| `"overview"` \| `"functions"` |
+| `provider_version` | ❌ | Omit to get latest |
+
+**Example — fetch azurerm_storage_account docs in one script:**
+
+```python
+# Step 1: search
+r1 = await rpc("tools/call", {"name": "search_providers", "arguments": {
+    "provider_name": "azurerm", "provider_namespace": "hashicorp",
+    "service_slug": "storage_account", "provider_document_type": "resources"
+}})
+# Extract doc ID
+doc_id = None
+for item in r1.get("result",{}).get("content",[]):
+    for line in item.get("text","").splitlines():
+        if "storage_account\n" in line or line.strip() == "- Title: storage_account":
+            pass  # next line has providerDocID — parse below
+import re
+text1 = "\n".join(i.get("text","") for i in r1.get("result",{}).get("content",[]))
+# Find the block for exact resource match and extract its providerDocID
+blocks = text1.split("---")
+for block in blocks:
+    if "storage_account" in block and "blob" not in block and "container" not in block:
+        m = re.search(r"providerDocID:\s*(\d+)", block)
+        if m: doc_id = m.group(1); break
+
+# Step 2: get full docs
+r2 = await rpc("tools/call", {"name": "get_provider_details", "arguments": {"provider_doc_id": doc_id}})
+text2 = "\n".join(i.get("text","") for i in r2.get("result",{}).get("content",[]))
+# Write to temp file if large
+import tempfile, os
+tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False)
+tmp.write(text2); tmp.close()
+print(f"Docs written to: {tmp.name}")
+print(text2[:3000])  # print first 3KB inline
+```
+
+### Module lookup
+
+```
+Step 1 — search_modules(module_query=<term>) → get module_id
+Step 2 — get_module_details(module_id=<id from step 1>)
+```
+
+---
+
 ## Pre-Generation Phase
 
 Before writing any .tf files:
 
-1. Call `get_provider_details` or `get_provider_capabilities` for the target provider
+1. Use the two-step provider workflow above to get `get_provider_details` for the target resource
 2. Call `search_modules` (or `search_private_modules` if token available)
 3. Check organisation policies with `list_workspace_policy_sets` on HCP Terraform
 4. Retrieve latest provider version with `get_latest_provider_version`
