@@ -626,27 +626,33 @@ For each such variable, check whether a `validation` block is present.
 
 **What to check:**
 
-Look at the file list retrieved in Step 3.
+Look at the file list retrieved in Step 3. Check for:
+- **Primary resource file:** `main.tf` OR named .tf file (storage.tf, aca.tf, etc.) identified in Step 3
+- **Variables file:** `variables.tf` (must exist)
+- **Outputs file:** `outputs.tf` (must exist)
+- **Versions file:** `versions.tf` (recommended) OR `terraform {}` block in primary resource file
 
 | Expected file | Purpose |
 |---------------|---------|
-| `main.tf` | Resource definitions only. No variable declarations. No output declarations. |
+| Primary resource file (main.tf, storage.tf, aca.tf, or other) | Resource definitions only. No variable declarations. No output declarations. |
 | `variables.tf` | Variable declarations only. No resource blocks. |
 | `outputs.tf` | Output declarations only. No resource blocks. |
-| `versions.tf` | `terraform {}` block with `required_version` and `required_providers`. This block must NOT be in `main.tf`. |
+| `versions.tf` (or `terraform {}` in primary resource file) | `terraform {}` block with `required_version` and `required_providers`. Preferred: separate file. |
 
 **Score:**
-- **Pass**: All four files present and used for their correct purpose
-- **Partial**: All files present but `versions.tf` content is in `main.tf`, or minor mixing of concerns
-- **Fail**: Files missing, or variable/output declarations mixed into `main.tf`
+- **Pass**: All three core files present (primary resource, variables.tf, outputs.tf) and used for their correct purpose
+- **Partial**: All core files present but `terraform {}` block mixed into primary resource file, or minor mixing of concerns
+- **Fail**: Core files missing, or variable/output declarations mixed into primary resource file
 
 ---
 
 ### Q6 — Provider Version Pin
 
-**What to check in `versions.tf` (or `main.tf` if `versions.tf` is absent):**
+**What to check in `versions.tf` (or primary resource file if `versions.tf` is absent):**
 
-Find the `required_providers` block. For the `azurerm` provider, check the `version` value.
+Search ALL `.tf` files for the `required_providers` block. If versions.tf doesn't exist,
+search the primary resource file (main.tf, storage.tf, aca.tf, etc. identified in Step 3).
+For the `azurerm` provider, check the `version` value.
 
 | Pattern found | Score |
 |---------------|-------|
@@ -654,16 +660,16 @@ Find the `required_providers` block. For the `azurerm` provider, check the `vers
 | `version = ">= 3.90.0, < 4.0.0"` (bounded range) | Pass |
 | `version = "~> 3.0"` (major only — allows any 3.x, including breaking minor changes) | Partial |
 | `version = ">= 3.0"` (unbounded) | Fail |
-| No `required_providers` block | Fail |
+| No `required_providers` block found in ANY .tf file | Fail |
 
 ---
 
 ### Q7 — Tagging
 
-**What to check in `variables.tf` and `main.tf`:**
+**What to check in `variables.tf` and primary resource file (main.tf or named .tf):**
 
-1. Is there a `variable "tags"` with `type = map(string)`?
-2. In `main.tf`, is there a `locals` block that merges the caller's `var.tags` with
+1. Is there a `variable "tags"` with `type = map(string)` in variables.tf?
+2. In the primary resource file, is there a `locals` block that merges the caller's `var.tags` with
    module-required tags?
 3. Are the merged tags (`local.tags`) applied to every resource that supports a `tags`
    argument?
@@ -677,9 +683,9 @@ Find the `required_providers` block. For the `azurerm` provider, check the `vers
 
 ### Q8 — for_each / dynamic Usage
 
-**What to check in `main.tf`:**
+**What to check in primary resource file (main.tf or named .tf):**
 
-Search for `count = ` in the file. For every `count =` found:
+Search for `count = ` in the primary resource file. For every `count =` found:
 - If it controls whether an entire optional sub-resource block is created (e.g.
   `count = var.enable_diagnostic_settings ? 1 : 0`), this is a **Fail** (should use
   `dynamic` block or separate `for_each` resource).
@@ -707,8 +713,8 @@ Does `README.md` exist? **Pass** = yes. **Fail** = no. (Skip R2–R7 if R1 is Fa
 
 ### R2 — Description Accurate
 
-Read the first paragraph of the README. Then look at `main.tf` and identify what
-resources are actually created.
+Read the first paragraph of the README. Then look at the primary resource file (main.tf or
+named .tf file identified in Step 3) and identify what resources are actually created.
 
 **Pass**: The description accurately names the Azure service and what the module creates.
 **Fail**: The description refers to a different service, is empty, or is clearly copy-pasted
@@ -718,7 +724,8 @@ from another module (check for mismatched service names).
 
 ### R3 — Inputs Table Accurate
 
-Find the inputs/variables table in the README. Compare it against `variables.tf`.
+Find the inputs/variables table in the README. Compare it against `variables.tf` (or any
+file containing variable declarations — search all .tf files).
 
 Check:
 1. Is every variable in `variables.tf` listed in the README?
@@ -733,7 +740,8 @@ Check:
 
 ### R4 — Outputs Table Accurate
 
-Find the outputs table in the README. Compare it against `outputs.tf`.
+Find the outputs table in the README. Compare it against `outputs.tf` (or any file
+containing output declarations — search all .tf files).
 
 Check:
 1. Is every output in `outputs.tf` listed in the README?
@@ -741,7 +749,7 @@ Check:
 
 **Pass**: All outputs listed with accurate descriptions.
 **Partial**: Some outputs missing or descriptions wrong.
-**Fail**: No outputs table, or outputs listed that don't exist in `outputs.tf`.
+**Fail**: No outputs table, or outputs listed that don't exist in outputs files.
 
 ---
 
@@ -757,19 +765,19 @@ call the module.
 
 ### R6 — Usage Example Accurate
 
-Read the usage example. Check it against `variables.tf`:
+Read the usage example. Check it against `variables.tf` (or any file with variables):
 
 1. Does the `source` path look correct for the TFC private registry format?
    (expected: `app.terraform.io/ORG/MODULE_NAME/azurerm`)
 2. Are all **required** variables (those without a `default`) included in the example?
-3. Are the variable names exactly as defined in `variables.tf`? (look for typos,
+3. Are the variable names exactly as defined in variable files? (look for typos,
    renamed variables that weren't updated in the README)
 4. Would a user be able to copy-paste the example and `terraform init` without errors
    (ignoring real values like subscription IDs)?
 
 **Pass**: Source path correct, all required variables present, all variable names match.
 **Partial**: Minor issues — 1–2 variable names wrong, or a non-critical required variable missing.
-**Fail**: Source path wrong, most required variables missing, or variable names don't match `variables.tf`.
+**Fail**: Source path wrong, most required variables missing, or variable names don't match declared variables.
 
 ---
 
