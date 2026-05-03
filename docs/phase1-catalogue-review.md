@@ -312,6 +312,81 @@ This finding will be recorded as a **Q2 (Variable Completeness)** or **Q5 (File 
 in the Code Quality scorecard (Step 5), depending on the reuse pattern and architectural
 significance.
 
+#### ⚠️ CRITICAL: Complex Variable File Organization
+
+**Context:** Azure provider modules often declare complex nested objects (e.g. storage account
+network rules with multiple nested blocks, app service configuration objects, or identity
+blocks with multiple properties). Some modules split these complex variable objects into
+separate `.tf` files (e.g. `variables-networking.tf`, `variables-security.tf`,
+`variables-identity.tf`) for human readability and maintainability.
+
+**HashiCorp Best Practice:** All variables should be declared in a single `variables.tf` file.
+
+**Company Context:** Splitting complex variables into organized `.tf` files is an acceptable
+deviation IF:
+1. Each file contains variable declarations ONLY (no resource or output blocks mixed in)
+2. File naming follows a clear pattern that documents what the variables control
+3. The README or module documentation explains the split
+4. The split improves readability without sacrificing discoverability
+
+**When to flag as a concern:**
+- Variable files are named ambiguously (e.g. `config.tf`, `settings.tf` — unclear what they configure)
+- Variable files are scattered randomly with no organizational pattern
+- Variable declarations are contaminated with resource or output blocks
+- Module README does NOT document the split pattern
+- The split creates maintenance burden (developers cannot find variables)
+
+**Detection:** After retrieving the module source in Step 3:
+
+1. Check if `variables.tf` exists
+2. If it does, check for OTHER files with variable declarations:
+   - Scan all .tf files for `variable "..."` blocks
+   - Look for files named: `variables-*.tf`, `vars-*.tf`, `config.tf`, `settings.tf`, or similar
+3. If MULTIPLE variable files found, assess their purpose:
+   - Are they organized by domain (e.g. `variables-networking.tf`, `variables-security.tf`)? ✓
+   - Is there a clear naming pattern? ✓
+   - Are they mentioned in the README? ✓
+   - Or are they scattered/ambiguous? ❌
+
+**Action:** Record the variable file pattern found.
+
+**Example findings to record:**
+
+```
+Module: storage-account
+✓ ORGANIZED SPLIT: Multiple variable files with clear purpose:
+   - variables.tf (core variables: location, resource_group_name, naming)
+   - variables-networking.tf (network_rules, service_endpoints, ip_ranges)
+   - variables-security.tf (encryption_key_vault_id, managed_identity_type, customer_msi)
+   
+File Pattern: Clearly named by domain. README section "Variable Organization" explains the split.
+Impact: Q5 (File Layout) = Pass
+Reason: Split improves readability without sacrificing discoverability.
+        Follows clear naming convention and is documented.
+```
+
+```
+Module: app-service
+❌ AMBIGUOUS SPLIT: Multiple variable files without clear organization:
+   - variables.tf
+   - config.tf (unclear purpose — contains app_settings, slot_config, backend_rules)
+   - settings.tf (unclear purpose — contains monitoring, logging, diagnostic variables)
+   
+File Pattern: `config.tf` and `settings.tf` are ambiguous. README does NOT explain the split.
+Impact: Q5 (File Layout) = Partial
+Reason: Developers cannot easily find variables. File names don't describe their purpose.
+        Should consolidate or rename to `variables-config.tf`, `variables-monitoring.tf`.
+```
+
+```
+Module: key-vault
+✓ STANDARD: Single `variables.tf` file (no split).
+Impact: Q5 (File Layout) = Pass
+Reason: Follows HashiCorp best practice. All variables in one place.
+```
+
+This finding will be recorded under **Q5 — File Layout** as part of the Code Quality scorecard.
+
 ---
 
 ## Step 4 — Score Each Module Against the Security Controls Scorecard
@@ -628,21 +703,34 @@ For each such variable, check whether a `validation` block is present.
 
 Look at the file list retrieved in Step 3. Check for:
 - **Primary resource file:** `main.tf` OR named .tf file (storage.tf, aca.tf, etc.) identified in Step 3
-- **Variables file:** `variables.tf` (must exist)
+- **Variables file structure:** `variables.tf` (must exist). MAY be supplemented by `variables-*.tf` files for complex object organization
 - **Outputs file:** `outputs.tf` (must exist)
 - **Versions file:** `versions.tf` (recommended) OR `terraform {}` block in primary resource file
 
 | Expected file | Purpose |
 |---------------|---------|
 | Primary resource file (main.tf, storage.tf, aca.tf, or other) | Resource definitions only. No variable declarations. No output declarations. |
-| `variables.tf` | Variable declarations only. No resource blocks. |
+| `variables.tf` | Primary variable declarations. May be supplemented by `variables-*.tf` for complex objects (see CRITICAL note below). |
+| `variables-*.tf` (optional) | Complex nested objects split for readability. ONLY if clearly named (variables-networking.tf, variables-security.tf) and documented in README. |
 | `outputs.tf` | Output declarations only. No resource blocks. |
 | `versions.tf` (or `terraform {}` in primary resource file) | `terraform {}` block with `required_version` and `required_providers`. Preferred: separate file. |
 
+#### ⚠️ CRITICAL: Variable File Organization
+
+If multiple variable files are found (see Step 3 detection):
+1. **Assess naming clarity:** Are they named descriptively (variables-networking.tf, variables-security.tf) or ambiguously (config.tf, settings.tf)?
+2. **Check for contamination:** Do they ONLY contain variables, or are resource/output blocks mixed in?
+3. **Check documentation:** Does the README explain WHY the split exists?
+4. **Decision matrix:**
+   - Clear naming + variable-only content + documented = **Pass** (intentional organization for complex objects)
+   - Clear naming + variable-only content + undocumented = **Partial** (good structure, but missing explanation)
+   - Ambiguous naming OR contaminated with other blocks OR undocumented split = **Partial/Fail** (violates discoverability)
+   - Single `variables.tf` = **Pass** (follows HashiCorp standard)
+
 **Score:**
-- **Pass**: All three core files present (primary resource, variables.tf, outputs.tf) and used for their correct purpose
-- **Partial**: All core files present but `terraform {}` block mixed into primary resource file, or minor mixing of concerns
-- **Fail**: Core files missing, or variable/output declarations mixed into primary resource file
+- **Pass**: All three core files present (primary resource, variables.tf, outputs.tf) and used for their correct purpose. If variable files are split, naming is clear and documented.
+- **Partial**: All core files present but `terraform {}` block mixed into primary resource file, OR variable files split with unclear naming/documentation, OR minor mixing of concerns
+- **Fail**: Core files missing, or variable/output declarations mixed into primary resource file, or variable files contaminated with resources/outputs
 
 ---
 
@@ -1272,11 +1360,64 @@ My findings:
   ✗ versions.tf MISSING
   ✓ README.md exists
 
-Result: Q5 = FAIL (missing 2 of 4 required files)
-
 Now trying to score Q1 (Variable Naming):
 Since variables.tf MISSING → Q1 = FAIL or N/A?
 Decision: Q1 = FAIL (cannot name variables if file doesn't exist)
+```
+
+---
+
+### Failure 9: Missing Variable File Organization Pattern
+
+**What happens:** Model finds `variables.tf` but misses supplementary variable files like `variables-networking.tf` or `variables-security.tf`, then underscores the module's organization.
+
+Example error:
+```
+Q5 - File Layout: PASS
+Evidence: "Module has main.tf, variables.tf, outputs.tf, and versions.tf"
+[But the module ALSO has variables-networking.tf and variables-security.tf with 40% of variables,
+causing reviewers to overlook important variable declarations]
+```
+
+**Prevention:**
+
+✅ **ALWAYS list ALL .tf files found in Step 3.**
+
+In Step 3, you retrieve the full file list from GitHub. When scoring Q5 (File Layout) in Step 5:
+
+1. **Check the full file list from Step 3** — don't just assume standard files exist
+2. **Look for variable files matching these patterns:**
+   - `variables.tf` (standard)
+   - `variables-*.tf` (split by domain: networking, security, identity, etc.)
+   - `vars-*.tf` (variant naming)
+   - `config.tf` or `settings.tf` (ambiguous — check if they contain variables)
+3. **If split variable files found, assess clarity:**
+   - ✓ Clear naming (variables-networking.tf, variables-security.tf) + documented in README = **PASS**
+   - ⚠️ Unclear naming (config.tf, settings.tf) or undocumented = **PARTIAL**
+   - ❌ Split files mixed with resource/output blocks = **FAIL**
+
+```
+Q5 - File Layout (corrected):
+
+Files retrieved in Step 3 (COMPLETE LIST):
+  ✓ main.tf (lines 1-100)
+  ✓ variables.tf (lines 1-50)
+  ✓ variables-networking.tf (lines 1-80)  [FOUND — was overlooked initially]
+  ✓ variables-security.tf (lines 1-60)    [FOUND — was overlooked initially]
+  ✓ outputs.tf (lines 1-40)
+  ✓ versions.tf (lines 1-10)
+  ✓ README.md
+
+Assessment:
+  - Primary resource file: main.tf ✓
+  - Variables: variables.tf + variables-networking.tf + variables-security.tf
+  - File naming clarity: Clear (domain-based split) ✓
+  - README documents split? [Check README for explanation]
+  - Variable-only content? [Verify no resource/output blocks mixed in]
+
+Result: Q5 = PASS (organized split with clear naming) 
+        OR Q5 = PARTIAL (organized but not documented in README)
+        OR Q5 = FAIL (ambiguous or contaminated)
 ```
 
 ---
