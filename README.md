@@ -6,8 +6,8 @@ A GitHub Copilot agent that gives Copilot Chat full access to the
 ## Quick Start
 
 ```bash
-# Install Python deps
-python3 -m venv .venv && source .venv/bin/activate
+# Install Python deps (Python 3.11+ required)
+/opt/homebrew/bin/python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r agent/requirements.txt
 
 # Configure secrets (gitignored)

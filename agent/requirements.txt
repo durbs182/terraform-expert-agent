@@ -1,2 +1,3 @@
+# Python 3.11+ required (mcp package is not available for 3.9)
 mcp>=1.0.0
 python-dotenv>=1.0.0
