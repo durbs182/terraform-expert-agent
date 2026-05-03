@@ -1,0 +1,23 @@
+name: terraform-expert
+description: >
+  Terraform and HCP Terraform expert. Writes, reviews, and deploys Terraform
+  infrastructure code. Manages workspaces, runs, variables, and private
+  registries via the HashiCorp Terraform MCP server.
+
+# System prompt — full decision tree and operational guidelines
+instructions: agent/instructions.md
+
+# MCP proxy server — started automatically when the agent is invoked
+server:
+  type: stdio
+  command: python
+  args:
+    - agent/server.py
+  # Secrets are read from the environment (or a gitignored .env file).
+  # Set these in your shell or CI environment — never hardcode them here.
+  env:
+    TFE_TOKEN: ${TFE_TOKEN}
+    TFE_ADDRESS: ${TFE_ADDRESS:-https://app.terraform.io}
+    # Optional: explicit path to terraform-mcp-server binary.
+    # Defaults to searching PATH if not set.
+    TERRAFORM_MCP_SERVER: ${TERRAFORM_MCP_SERVER:-}
