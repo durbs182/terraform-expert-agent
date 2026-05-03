@@ -353,9 +353,13 @@ variable "allowed_ip_ranges" is not defined — caller cannot restrict access.
 
 **Question:** Does the module restrict network access by default?
 
-**FILE SCOPE:** Check ONLY `main.tf` and `variables.tf`
+**FILE SCOPE:** Search ALL `.tf` files (not just `main.tf`). Resource definitions may be in
+`main.tf`, `networking.tf`, `security.tf`, or any named .tf file. Variables are in `variables.tf`.
 
-**What to look for in `main.tf`:**
+**If main.tf does not exist:** Search for files named: `storage.tf`, `network*.tf`, `security*.tf`,
+or any .tf file containing the primary resource definition (identified in Step 3).
+
+**What to look for:**
 
 - Look for any of: `network_rules`, `network_acls`, `ip_rules`, `virtual_network_subnet_ids`,
   `service_endpoints`, `subnet_id`, `vnet_integration`, `network_profile`
@@ -386,9 +390,9 @@ network_rules {
 | Network rules block with `default_action = "Deny"` hardcoded | Pass |
 | Network rules block exists but `default_action = "Allow"` by default | Partial |
 | Variable to set subnet IDs / IP rules exists but defaults to empty (no restriction) | Partial |
-| No `network_rules` block found in main.tf (NOT FOUND) | Fail |
+| No `network_rules` block found in ANY .tf file (NOT FOUND) | Fail |
 
-**Record your evidence:** Line number + 2–3 lines of code.
+**Record your evidence:** Filename + line number + 2–3 lines of code.
 
 ---
 
@@ -396,11 +400,15 @@ network_rules {
 
 **Question:** Does the module support or create private endpoints?
 
-**FILE SCOPE:** Check ONLY `main.tf` (for resource) and `variables.tf` (for variables)
+**FILE SCOPE:** Search ALL `.tf` files. Private endpoint resources may be in `main.tf`,
+`networking.tf`, `private-endpoints.tf`, or any named .tf file. Variables are in `variables.tf`.
+
+**If main.tf does not exist:** Search for files named: `network*.tf`, `endpoint*.tf`,
+`private*.tf`, or any .tf file containing the primary resource definition.
 
 **EXACT SEARCH PATTERN:**
 
-In `main.tf`, search line-by-line for: `azurerm_private_endpoint`
+Search ALL `.tf` files line-by-line for: `azurerm_private_endpoint`
 
 In `variables.tf`, search for ANY variable name containing:
   - `"private_endpoint"` (exact substring)
@@ -409,9 +417,15 @@ In `variables.tf`, search for ANY variable name containing:
 **CONCRETE EXAMPLES:**
 
 ```hcl
-# PASS pattern:
+# PASS pattern (resource):
 resource "azurerm_private_endpoint" "this" {
   name          = "pe-storage"
+  ...
+}
+
+# PASS pattern (split file example):
+# networking.tf:
+resource "azurerm_private_endpoint" "storage" {
   ...
 }
 
@@ -422,7 +436,7 @@ variable "private_endpoint_subnet_id" {
 }
 
 # FAIL pattern:
-# No azurerm_private_endpoint resource
+# No azurerm_private_endpoint resource in ANY .tf file
 # No variable with "private_endpoint" in the name
 ```
 
@@ -430,14 +444,14 @@ variable "private_endpoint_subnet_id" {
 
 | Finding | Score |
 |---------|-------|
-| `azurerm_private_endpoint` resource created in module (found in main.tf) | Pass |
-| Variable `private_endpoint_subnet_id` or similar exists AND is used in main.tf | Pass |
-| Variable exists in variables.tf BUT NOT used in main.tf (variable defined but ignored) | Partial |
+| `azurerm_private_endpoint` resource created in module (found in any .tf file) | Pass |
+| Variable `private_endpoint_subnet_id` or similar exists AND is used | Pass |
+| Variable exists in variables.tf BUT NOT used in any resource file (defined but ignored) | Partial |
 | Variable exists AND optional (has default value) | Partial |
-| No private endpoint support found (NOT FOUND) | Fail |
+| No private endpoint support found in ANY .tf file (NOT FOUND) | Fail |
 | Service is internal-only by architecture (e.g. VNet-internal load balancer) | N/A — justify |
 
-**Record your evidence:** Line numbers + exact variable/resource names found.
+**Record your evidence:** Filename + line numbers + exact variable/resource names found.
 
 ---
 
@@ -445,7 +459,13 @@ variable "private_endpoint_subnet_id" {
 
 **Question:** Is public network access disabled by default?
 
-**What to look for in `main.tf` and `variables.tf`:**
+**FILE SCOPE:** Search ALL `.tf` files (security, main, networking, or any named .tf file).
+Variables are in `variables.tf`.
+
+**If main.tf does not exist:** Search for files named: `security*.tf`, `main*.tf`, `storage.tf`,
+or any .tf file containing the primary resource definition.
+
+**What to look for:**
 
 - `public_network_access_enabled`
 - `allow_blob_public_access`, `enable_https_traffic_only`
@@ -456,13 +476,13 @@ variable "private_endpoint_subnet_id" {
 
 | Finding | Score |
 |---------|-------|
-| `public_network_access_enabled = false` hardcoded | Pass |
+| `public_network_access_enabled = false` hardcoded in ANY .tf file | Pass |
 | Variable exists with `default = false` AND a `validation` block preventing `true` | Pass |
 | Variable exists with `default = false` but no validation (caller can override to `true`) | Partial |
 | Variable exists with `default = true` | Fail |
 | No variable — public access controlled by network rules only | Partial (document the mitigation) |
 
-**Record your evidence.**
+**Record your evidence:** Filename + line number + exact code pattern found.
 
 ---
 
@@ -470,9 +490,15 @@ variable "private_endpoint_subnet_id" {
 
 **Question:** Does the module configure a managed identity for the resource?
 
-**What to look for in `main.tf`:**
+**FILE SCOPE:** Search ALL `.tf` files. The `identity` block may be in `main.tf`, `identity.tf`,
+`auth.tf`, or any named .tf file. Variables are in `variables.tf`.
 
-- `identity` block inside the primary resource
+**If main.tf does not exist:** Search for files named: `identity*.tf`, `auth*.tf`, `security*.tf`,
+or any .tf file containing the primary resource definition.
+
+**What to look for:**
+
+- `identity` block inside the primary resource (in any .tf file)
 - `type = "SystemAssigned"` or `type = "UserAssigned"` or `type = "SystemAssigned, UserAssigned"`
 - Variables: `identity_type`, `user_assigned_identity_ids`
 
@@ -485,12 +511,12 @@ variable "private_endpoint_subnet_id" {
 
 | Finding | Score |
 |---------|-------|
-| `identity` block present, system-assigned by default | Pass |
+| `identity` block present in ANY .tf file, system-assigned by default | Pass |
 | `identity` block present but only via optional variable (default = no identity) | Partial |
-| No `identity` block | Fail |
+| No `identity` block found in ANY .tf file | Fail |
 | Service does not support managed identity (e.g. some legacy services) | N/A — justify |
 
-**Record your evidence.**
+**Record your evidence:** Filename + line number + identity block code.
 
 ---
 
@@ -498,7 +524,13 @@ variable "private_endpoint_subnet_id" {
 
 **Question:** Are secrets stored in or referenced from Azure Key Vault?
 
-**What to look for in `main.tf` and `outputs.tf`:**
+**FILE SCOPE:** Search ALL `.tf` files and `outputs.tf`. Key Vault integration may be in
+`main.tf`, `security.tf`, `vault.tf`, `secrets.tf`, or any named .tf file.
+
+**If main.tf does not exist:** Search for files named: `vault*.tf`, `secret*.tf`, `security*.tf`,
+or any .tf file containing the primary resource definition.
+
+**What to look for in ALL .tf files and outputs.tf:**
 
 - `azurerm_key_vault_secret` resource that writes generated secrets to Key Vault
 - Variables accepting `key_vault_id` or `key_vault_secret_id`
