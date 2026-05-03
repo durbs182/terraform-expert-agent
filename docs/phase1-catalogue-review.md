@@ -702,7 +702,7 @@ variable "private_endpoint_subnet_id" {
 
 ### S3 — Public Access Blocked
 
-**Question:** Is public network access disabled by default?
+**Question:** Is public network access disabled by default? If public access is configurable, are security exceptions properly documented?
 
 **FILE SCOPE:** Search ALL `.tf` files (security, main, networking, or any named .tf file).
 Variables are in `variables.tf`.
@@ -716,6 +716,7 @@ or any .tf file containing the primary resource definition.
 - `allow_blob_public_access`, `enable_https_traffic_only`
 - `public_ip_address_id` (presence of public IP)
 - Variables that control public access and their `default` values
+- Variable descriptions (if public access is optional) — check for mandatory security exception language
 
 **Scoring:**
 
@@ -723,11 +724,43 @@ or any .tf file containing the primary resource definition.
 |---------|-------|
 | `public_network_access_enabled = false` hardcoded in ANY .tf file | Pass |
 | Variable exists with `default = false` AND a `validation` block preventing `true` | Pass |
-| Variable exists with `default = false` but no validation (caller can override to `true`) | Partial |
+| Variable exists with `default = false` but no validation (caller can override to `true`) | **Partial** |
+| Variable is configurable (can be set to `true`) AND variable description explicitly states: "Security exception AND policy exception required" with references to specific policies | **Partial** |
+| Variable is configurable (can be set to `true`) BUT variable description does NOT mention security/policy exceptions | **Fail** |
 | Variable exists with `default = true` | Fail |
 | No variable — public access controlled by network rules only | Partial (document the mitigation) |
 
-**Record your evidence:** Filename + line number + exact code pattern found.
+**Important Note on Configurable Public Access:**
+
+Even if public access defaults to `false`, if it is exposed as a configurable variable (allowing callers to set it to `true`), the module **MUST** document the security exception and policy exception requirements in the variable description. Example:
+
+```hcl
+# PASS pattern (if public access is optional):
+variable "public_access_enabled" {
+  type        = bool
+  default     = false
+  description = <<-EOT
+    Enable public network access. WARNING: This requires security exception AND policy exception approval.
+    - See: [Company Security Policy § 5.3 - Public Access](link/to/policy)
+    - See: [Network Security Policy § A.2 - Exceptions](link/to/policy)
+    Public access should only be enabled in non-production or legacy scenarios. Requires documented business justification.
+  EOT
+
+  validation {
+    condition     = var.public_access_enabled == false || can(regex("^(legacy|non-prod)$", var.environment))
+    error_message = "Public access only allowed in legacy or non-prod environments with documented exception approval."
+  }
+}
+
+# FAIL pattern:
+variable "public_access_enabled" {
+  type        = bool
+  default     = false
+  description = "Set to true to enable public access"  # ← No exception documentation
+}
+```
+
+**Record your evidence:** Filename + line number + exact variable definition + description text (if public access is configurable).
 
 ---
 
@@ -893,6 +926,125 @@ Conclusion: S6 = FAIL
 ```
 
 **Record your evidence with line numbers and README references.**
+
+---
+
+### S7 — Account Keys & Connection Strings Restricted
+
+**Question:** Are account keys and connection strings blocked by default? If they are configurable, are security exceptions properly documented?
+
+**Applies to:** Storage accounts, databases, API management, event hubs, service buses, and any resource that generates or exposes account keys or connection strings.
+
+**FILE SCOPE:** Search ALL `.tf` files. Look in `main.tf`, `security.tf`, `variables.tf`, `outputs.tf`, or any named .tf file.
+
+**If main.tf does not exist:** Search for files named: `security*.tf`, `auth*.tf`, `main*.tf`, or any .tf file containing the primary resource definition.
+
+**What to look for:**
+
+**In variables.tf:**
+- `access_key_enabled`, `primary_access_key`, `connection_string_enabled`, `shared_access_key`
+- Any variable that controls whether account keys or connection strings are generated
+- Variable `default` values — `true` means keys are exposed by default (FAIL)
+- Variable descriptions — check for security exception language (if configurable)
+
+**In main.tf / resource files:**
+- Look for patterns like: `primary_access_key`, `primary_connection_string`, `secondary_key`
+- Check if these are hardcoded or controlled by a variable
+
+**In outputs.tf:**
+- Do outputs expose raw account keys or connection strings?
+- Are sensitive outputs marked with `sensitive = true`?
+
+**CONCRETE EXAMPLES:**
+
+```hcl
+# PASS pattern (account keys BLOCKED by default):
+resource "azurerm_storage_account" "this" {
+  name = var.storage_account_name
+  # shared_access_key_enabled is NOT set (defaults to false in provider)
+  # OR explicitly:
+  shared_access_key_enabled = false  ← Keys disabled
+}
+
+# PASS pattern (if keys are optional but protected):
+variable "shared_access_key_enabled" {
+  type        = bool
+  default     = false
+  description = <<-EOT
+    Enable shared access keys. WARNING: This requires security exception AND policy exception approval.
+    - See: [Company Security Policy § 6.1 - Account Key Management](link/to/policy)
+    - See: [Authentication Policy § B.3 - Key Restrictions](link/to/policy)
+    Account keys should only be enabled for legacy client compatibility. Requires documented business justification.
+  EOT
+
+  validation {
+    condition     = var.shared_access_key_enabled == false || can(regex("^(legacy|migration)$", var.scenario))
+    error_message = "Shared access keys only allowed for legacy or migration scenarios with documented exception approval."
+  }
+}
+
+# FAIL pattern (keys enabled by default):
+resource "azurerm_storage_account" "this" {
+  shared_access_key_enabled = true  ← Keys exposed by default
+}
+
+# FAIL pattern (configurable but no exception documentation):
+variable "enable_connection_string" {
+  type        = bool
+  default     = false
+  description = "Enable connection string output"  # ← No exception documentation
+}
+
+# FAIL pattern (keys exposed in outputs without sensitive marking):
+output "primary_access_key" {
+  value = azurerm_storage_account.this.primary_access_key
+  # Missing: sensitive = true
+}
+
+# PARTIAL pattern (keys exposed but marked sensitive):
+output "connection_string" {
+  value       = azurerm_storage_account.this.primary_connection_string
+  sensitive   = true  # ← Terraform protects this value
+  description = "Primary connection string. WARNING: Contains secrets. Do not commit to version control."
+}
+```
+
+**Scoring:**
+
+| Finding | Score |
+|---------|-------|
+| Account keys/connection strings are hardcoded as `false` or not exposed at all | Pass |
+| Variable exists to enable keys with `default = false` AND `validation` block enforcing restricted scenarios | Pass |
+| Variable exists with `default = false` AND variable description explicitly states security/policy exception requirements | Partial |
+| Variable exists with `default = false` but no exception documentation | Partial |
+| Keys are configurable but description does NOT mention security/policy exceptions | Fail |
+| Keys are enabled by default (`default = true` or resource-level `enabled = true`) | Fail |
+| Connection strings exposed in outputs WITHOUT `sensitive = true` | Fail |
+| Account keys or connection strings passed to other modules/outputs without sensitivity marking | Fail |
+
+**Important Notes:**
+
+1. **Azure provider defaults:** Many Azure resources have provider-level defaults. If `shared_access_key_enabled` is not explicitly set, check the provider documentation (from Step 3.5) for the default behavior.
+
+2. **Connection strings vs outputs:** If a connection string MUST be returned (e.g., for application use), it MUST be marked `sensitive = true` in the output. This prevents Terraform from logging the value in plan/apply output.
+
+3. **Policy exceptions:** If keys are configurable for legacy reasons, the variable description MUST cite the specific company policy exception and reference the approval process.
+
+4. **Outputs that contain secrets:** Any output that includes account keys, connection strings, or access keys must be marked `sensitive = true`. Example:
+
+```hcl
+output "storage_connection_string" {
+  value       = "DefaultEndpointProtocol=https;AccountName=${azurerm_storage_account.this.name};AccountKey=${azurerm_storage_account.this.primary_access_key};..."
+  sensitive   = true
+  description = "Storage account connection string. NEVER commit to version control. Use local exec or Terraform secret backend."
+}
+```
+
+**Record your evidence:**
+- Filename + line numbers for account key / connection string variables
+- Variable default values and descriptions (if configurable)
+- Output definitions (and whether `sensitive = true` is present)
+- README section (if keys are configurable, must have exception documentation)
 
 ---
 
@@ -1693,7 +1845,7 @@ Result: Q5 = PASS (organized split with clear naming)
 
 ### Failure 10: Not Using Provider Documentation for Deviation Detection
 
-**What happens:** Model scores security controls (S1-S5) without referencing the official provider documentation from Step 3.5. Results in:
+**What happens:** Model scores security controls (S1-S7) without referencing the official provider documentation from Step 3.5. Results in:
 - Incorrect N/A scores (flag something as N/A when it's actually supported by the resource)
 - Missed deviations (module omits a security capability but model doesn't know it's available)
 - False passes (model doesn't know a variable is unsupported in that provider version)
@@ -1709,9 +1861,9 @@ S6 — Provider Usage Coverage: PASS
 
 **Prevention:**
 
-✅ **ALWAYS consult the provider documentation from Step 3.5 before scoring S1-S5.**
+✅ **ALWAYS consult the provider documentation from Step 3.5 before scoring S1-S7.**
 
-1. **Before scoring S1-S5:** Reference the provider docs you retrieved
+1. **Before scoring S1-S7:** Reference the provider docs you retrieved
 2. **For each security control:** Check "Is this capability supported by the resource in this provider version?"
 3. **If NOT supported:** Mark as N/A with justification, don't score as Fail
 4. **If supported but NOT exposed:** Mark as Fail or Partial depending on whether README justifies the omission
@@ -1796,15 +1948,17 @@ documents the authoritative sources for each criterion.
 | **Tagging (Q7)** | Terraform Best Practices | Apply consistent tags to all resources. Accept a `tags` variable and merge with module-required tags using `locals`. [`https://developer.hashicorp.com/terraform/language/meta-arguments/lifecycle#local-values`] |
 | **for_each vs count (Q8)** | Terraform Best Practices | Prefer `for_each` over `count` for cleaner state and better reproducibility. [`https://developer.hashicorp.com/terraform/language/meta-arguments/for_each`] |
 
-### S1-S5 — Security Control Standards
+### S1-S7 — Security Control Standards
 
 | Control | Source | Citation |
 |---------|--------|----------|
 | **Network Isolation (S1)** | Azure Terraform Best Practices | Use `network_rules` with `default_action = "Deny"` to restrict network access by default. Reference: [`https://learn.microsoft.com/en-us/azure/developer/terraform/best-practices`] |
 | **Private Endpoints (S2)** | Azure Private Endpoint Docs | Deploy resources with private endpoint support. Reference: [`https://learn.microsoft.com/en-us/azure/private-link/private-endpoint-overview`] |
-| **Public Access Blocked (S3)** | Azure Security Best Practices | Disable public network access by default unless explicitly required. Reference: [`https://learn.microsoft.com/en-us/azure/security/fundamentals/network-best-practices`] |
+| **Public Access Blocked (S3)** | Azure Security Best Practices | Disable public network access by default. If configurable, require explicit security and policy exception documentation. Reference: [`https://learn.microsoft.com/en-us/azure/security/fundamentals/network-best-practices`] |
 | **Managed Identity (S4)** | Azure Managed Identity | Use system-assigned or user-assigned managed identities instead of connection strings/keys. Reference: [`https://learn.microsoft.com/en-us/azure/active-directory/managed-identities-azure-resources/overview`] |
 | **Key Vault Integration (S5)** | Azure Key Vault Best Practices | Store secrets in Key Vault, not in connection strings or outputs. Reference: [`https://learn.microsoft.com/en-us/azure/key-vault/general/best-practices`] |
+| **Provider Usage Coverage (S6)** | Terraform Provider Registry | Modules must implement (or justify omitting) supported resource capabilities. Provider version must be current (within 3 minor releases of latest). Reference: [`https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs`] |
+| **Account Keys & Connection Strings (S7)** | Azure Authentication Best Practices | Disable account keys and connection strings by default. If configurable, require explicit security and policy exception documentation in variable description. Mark any exposed secrets `sensitive = true` in outputs. Reference: [`https://learn.microsoft.com/en-us/azure/security/fundamentals/shared-responsibility`] and [`https://learn.microsoft.com/en-us/azure/storage/common/storage-account-keys-manage`] |
 
 ### R1-R7 — README Documentation Standards
 
