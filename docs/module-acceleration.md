@@ -595,5 +595,6 @@ Pre-configured GitHub Actions enforce code quality, validation, and integration 
 - [Azure Resource Naming Convention (CAF)](https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/azure-best-practices/resource-naming)
 - [TFC Private Registry Docs](https://developer.hashicorp.com/terraform/cloud-docs/registry)
 - [checkov](https://www.checkov.io/) / [tfsec](https://aquasecurity.github.io/tfsec/)
+- [Chef InSpec](https://docs.chef.io/inspec/) / [InSpec Azure Resources](https://github.com/inspec/inspec-azure/) — integration testing framework for Azure infrastructure validation
 - Agent instructions: `agent/instructions.md`
 - [docs/phase1-catalogue-review.md](phase1-catalogue-review.md) — detailed Phase 1 review instructions (low-cost model ready)
