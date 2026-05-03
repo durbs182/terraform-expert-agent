@@ -241,6 +241,18 @@ Track delta: "Before: 17/21 Pass (Cheap), After: 20/21 Pass (Cheap)" = +3 criter
 - **Convergence speed**: Typically 2 iterations (B→C→D) to reach 95%+ parity
 - **Cost-benefit**: Cheap model review typically 30-40% of premium cost post-validation
 
+### Phase 1 Refinement Deliverables
+
+Upon completion, produce the following artifacts:
+
+| Artifact | Purpose | Owner |
+|----------|---------|-------|
+| **`docs/phase1-catalogue-review.md` (updated)** | Refined instructions incorporating all Phase B→C→D improvements | Copilot |
+| **`analysis/phase1-comparison-report.md`** | Side-by-side comparison of Premium vs Cheap output (Iteration 1 and Iteration 2) | QA/Product |
+| **`analysis/phase1-failure-modes.md`** | Categorized list of all divergences found and fixes applied | Copilot |
+| **`analysis/cost-benefit-report.md`** | ROI analysis: time/cost per module, savings vs premium model, break-even point | Finance/PM |
+| **`checklists/phase1-execution-checklist.md`** | Quick-reference for human validating cheap model output (when/if manual QA is needed) | QA |
+
 > **Note**: This testing process is independent of Phases 2-6. Once Phase 1 instructions are
 > validated and locked, Phases 2-6 (code generation, validation, publication) proceed with 
 > the validated instructions.
