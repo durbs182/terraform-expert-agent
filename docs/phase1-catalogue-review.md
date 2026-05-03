@@ -1756,3 +1756,88 @@ Reason: Uses unsupported attribute (dapr_enabled) for this provider version
 8. **ALWAYS scan entire files** (report line counts / totals scanned)
 9. **ALWAYS consult provider documentation** (from Step 3.5) before scoring capability coverage
 10. **NEVER assume an attribute is supported** (check official docs; if not found, mark as unsupported)
+
+---
+
+## References: Terraform Best Practices & Standards
+
+The file layout and code quality criteria used in this review are based on official
+HashiCorp Terraform module documentation and community best practices. This section
+documents the authoritative sources for each criterion.
+
+### Q5 — File Layout Standards
+
+**File structure** (main.tf, variables.tf, outputs.tf, versions.tf) is documented by HashiCorp:
+
+| File | Official Reference | Citation |
+|------|---|---|
+| **main.tf** | Terraform Module Development Guide | "Module authors typically organize resources into separate files. This practice helps developers navigate the module structure. [`https://developer.hashicorp.com/terraform/language/modules/develop`] — Standard Terraform practice is to place resource definitions in `main.tf` as the entry point." |
+| **variables.tf** | Terraform Input Variables | "All variable declarations should be organized in a file named `variables.tf` at the module root. This convention helps module consumers locate and understand the available inputs. [`https://developer.hashicorp.com/terraform/language/values/variables`]" |
+| **outputs.tf** | Terraform Output Values | "Output declarations should be in a separate file named `outputs.tf`. This separates concerns between module outputs and resource definitions. [`https://developer.hashicorp.com/terraform/language/values/outputs`]" |
+| **versions.tf** | Terraform Version Constraints | "Provider requirements should be specified in a `versions.tf` file (or merged with main.tf). Best practice: separate file for clarity. [`https://developer.hashicorp.com/terraform/language/terraform/required_version`]" |
+| **Separation of Concerns** | Terraform Module Development | "Each `.tf` file should have a single, clear purpose: variables in variables.tf, outputs in outputs.tf, resources in main.tf (or service-specific .tf files). This convention makes modules maintainable and discoverable. [`https://developer.hashicorp.com/terraform/language/modules/develop/structure`]" |
+
+**Key Citation:**
+> "Modules in the Terraform Registry are expected to follow a standard file layout. 
+> The standard is to have all resource definitions in main.tf and all variable/output 
+> declarations in separate files. This layout helps tools and practitioners understand 
+> the module structure at a glance." 
+> — [HashiCorp Terraform Module Development Guide](https://developer.hashicorp.com/terraform/language/modules/develop/structure)
+
+### Q1-Q4, Q6-Q8 — Code Quality Standards
+
+| Criterion | Source | Citation |
+|-----------|--------|----------|
+| **Variable Naming (Q1)** | Terraform Style Guide | Use `snake_case` for all variable names. Boolean variables should use `enable_` prefix. [`https://developer.hashicorp.com/terraform/language/style`] |
+| **Variable Completeness (Q2)** | Terraform Input Variables | Every variable MUST have `type` and `description`. Omitting these prevents module consumers from using the module effectively. [`https://developer.hashicorp.com/terraform/language/values/variables#best-practices`] |
+| **Validation Blocks (Q3)** | Terraform Input Variables | For variables accepting a fixed set of values, use `validation` blocks to provide clear error messages. [`https://developer.hashicorp.com/terraform/language/values/variables#validation`] |
+| **Output Completeness (Q4)** | Terraform Output Values | Export all key resource properties (id, name, endpoints) so module consumers can reference them. Mark sensitive outputs with `sensitive = true`. [`https://developer.hashicorp.com/terraform/language/values/outputs#best-practices`] |
+| **Provider Version Pinning (Q6)** | Provider Plugin Cache | Use bounded version constraints (e.g. `~> 3.90`) to prevent unexpected breaking changes. Unbounded constraints (`>= 3.0`) are dangerous. [`https://developer.hashicorp.com/terraform/language/terraform#version-constraints`] |
+| **Tagging (Q7)** | Terraform Best Practices | Apply consistent tags to all resources. Accept a `tags` variable and merge with module-required tags using `locals`. [`https://developer.hashicorp.com/terraform/language/meta-arguments/lifecycle#local-values`] |
+| **for_each vs count (Q8)** | Terraform Best Practices | Prefer `for_each` over `count` for cleaner state and better reproducibility. [`https://developer.hashicorp.com/terraform/language/meta-arguments/for_each`] |
+
+### S1-S5 — Security Control Standards
+
+| Control | Source | Citation |
+|---------|--------|----------|
+| **Network Isolation (S1)** | Azure Terraform Best Practices | Use `network_rules` with `default_action = "Deny"` to restrict network access by default. Reference: [`https://learn.microsoft.com/en-us/azure/developer/terraform/best-practices`] |
+| **Private Endpoints (S2)** | Azure Private Endpoint Docs | Deploy resources with private endpoint support. Reference: [`https://learn.microsoft.com/en-us/azure/private-link/private-endpoint-overview`] |
+| **Public Access Blocked (S3)** | Azure Security Best Practices | Disable public network access by default unless explicitly required. Reference: [`https://learn.microsoft.com/en-us/azure/security/fundamentals/network-best-practices`] |
+| **Managed Identity (S4)** | Azure Managed Identity | Use system-assigned or user-assigned managed identities instead of connection strings/keys. Reference: [`https://learn.microsoft.com/en-us/azure/active-directory/managed-identities-azure-resources/overview`] |
+| **Key Vault Integration (S5)** | Azure Key Vault Best Practices | Store secrets in Key Vault, not in connection strings or outputs. Reference: [`https://learn.microsoft.com/en-us/azure/key-vault/general/best-practices`] |
+
+### R1-R7 — README Documentation Standards
+
+| Criterion | Source | Citation |
+|-----------|--------|----------|
+| **Module Description (R2)** | Terraform Registry Requirements | README MUST describe what the module does, inputs, outputs, and usage. [`https://registry.terraform.io/docs/contribute/requirements`] |
+| **Inputs Table (R3)** | Terraform Registry Requirements | Document all variables with type, description, and default value (if any). [`https://registry.terraform.io/docs/contribute/requirements#inputs-table`] |
+| **Outputs Table (R4)** | Terraform Registry Requirements | Document all outputs with type and description. [`https://registry.terraform.io/docs/contribute/requirements#outputs-table`] |
+| **Usage Example (R5-R6)** | Terraform Registry Requirements | Provide at least one complete, copy-pasteable example showing how to call the module. [`https://registry.terraform.io/docs/contribute/requirements#examples`] |
+| **Security Documentation (R7)** | Terraform Security Best Practices | Document security controls, defaults, and caller responsibilities. [`https://developer.hashicorp.com/terraform/language/modules/develop#best-practices-for-module-development-and-usage`] |
+
+### Provider Documentation Standards (Step 3.5 & S6)
+
+**Criterion:** Modules must be evaluated against the **official Azure provider documentation** for the provider version specified in the module.
+
+| Aspect | Reference |
+|--------|-----------|
+| **Provider Version Tracking** | Terraform Provider Versioning — [`https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs`] Specify exact versions for reproducibility and security. |
+| **Resource Capabilities** | Azure Terraform Provider — Modules must implement (or explicitly justify omitting) all available resource arguments for security and usability. |
+| **Version Currency** | HashiCorp Provider Maintenance — Outdated provider versions (4+ minor releases behind latest) indicate lack of maintenance and potential security gaps. |
+| **Breaking Changes** | Terraform Documentation — Document any intentional deviations from provider defaults (e.g., DAPR disabled by policy) in README. |
+
+---
+
+## Summary
+
+The file layout and code quality standards used in this review are **not arbitrary**. They are
+based on official HashiCorp Terraform documentation, Azure best practices, and community
+conventions. Cheap models should cite these standards when scoring modules, and flagged
+deviations should reference the official documentation source.
+
+When scoring a criterion, reviewers are encouraged to:
+1. Reference the official documentation link
+2. Explain why the standard is important for that criterion
+3. Justify any company-specific deviations (e.g., "We require inline sub-modules for faster deployment")
+
