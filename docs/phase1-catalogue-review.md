@@ -226,6 +226,71 @@ Impact: Q5 (File Layout) = Pass
 This deviation will be scored under **Q5 — File Layout** as part of the Code Quality
 scorecard (Step 5).
 
+#### ⚠️ CRITICAL: Inline Sub-Module Detection
+
+**Terraform module best practice:** A module should be focused, composable, and independently
+versioned. If a module contains other modules as sub-modules, those sub-modules should be
+published separately to the registry and referenced by version, NOT defined inline.
+
+**Why this matters:**
+- Inline sub-modules create **tight coupling** — the parent module cannot be reused without
+  understanding internal sub-module structure
+- **No independent versioning** — sub-modules cannot be fixed or improved separately
+- **Maintenance burden** — changes to sub-modules affect all consumers of the parent
+- **Testing complexity** — impossible to unit-test sub-modules in isolation
+- **Documentation gaps** — sub-modules are typically undocumented in the parent README
+
+**Detection:** Search the module source code for `module` blocks in:
+- `main.tf` (or the primary resource file if main.tf doesn't exist)
+- Any .tf file that would normally contain resources
+
+**What to look for:**
+
+```hcl
+# BAD PATTERN (inline sub-module):
+module "networking" {
+  source = "./modules/vnet"        # Local path, not registry reference
+  ...
+}
+
+module "diagnostics" {
+  source = "./modules/monitoring"  # Local path — tightly coupled
+  ...
+}
+
+# GOOD PATTERN (published sub-module):
+module "networking" {
+  source = "app.terraform.io/acme-corp/vnet/azurerm"  # Registry reference
+  version = "2.1.0"                                     # Independent version
+  ...
+}
+```
+
+**Action:** Record inline sub-modules found.
+
+**Example findings to record:**
+
+```
+Module: storage-account
+❌ INLINE SUB-MODULES DETECTED:
+   - main.tf:15-18:  module "diagnostics" { source = "./modules/diagnostics" }
+   - main.tf:20-25:  module "access_tier" { source = "./modules/access-control" }
+   
+Impact: Q2 (Variable Completeness) / Q5 (File Layout) = Partial/Fail
+Reason: Sub-modules are local and tightly coupled. Should be published separately
+        to the registry and referenced by version.
+```
+
+```
+Module: key-vault
+✓ NO INLINE SUB-MODULES: Uses published registry modules only.
+   - Example: module "rbac" { source = "app.terraform.io/acme-corp/rbac/azurerm", version = "1.5.0" }
+Impact: Q2 (Variable Completeness) = Pass
+```
+
+This finding will be recorded as a **Q2 (Variable Completeness)** or **Q5 (File Layout)** issue
+in the Code Quality scorecard (Step 5), depending on architectural significance.
+
 ---
 
 ## Step 4 — Score Each Module Against the Security Controls Scorecard
