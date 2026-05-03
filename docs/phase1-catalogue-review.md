@@ -389,6 +389,176 @@ This finding will be recorded under **Q5 — File Layout** as part of the Code Q
 
 ---
 
+## Step 3.5 — Retrieve and Document Provider Version & Capability Reference
+
+### What you are doing
+
+Before scoring security controls, you must:
+1. Extract the **azurerm provider version** from the module (from `versions.tf` or primary resource file)
+2. Retrieve the **official Azure provider documentation** for that specific version using the terraform-expert agent
+3. Document the resource capabilities and variables available in that version
+4. Check if a newer provider version is available (indicates maintenance posture)
+
+This reference will be used in Steps 4-6 to flag any deviations from the published resource interface.
+
+### Extract Provider Version
+
+From the files retrieved in Step 3, find the `azurerm` provider version:
+
+```bash
+# In versions.tf or main.tf, look for:
+terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.90"   ← Your version constraint
+    }
+  }
+}
+```
+
+**Record:**
+- Exact version constraint (e.g. `"~> 3.90"`, `"3.90.0"`, `">= 3.0"`)
+- Resolved version (e.g. if constraint is `"~> 3.90"`, latest in that range is `3.90.5`)
+
+### Retrieve Official Provider Documentation
+
+**Step 3.5.1: Use the terraform-expert Copilot agent to fetch provider docs**
+
+The terraform-expert agent has access to the Terraform MCP registry and can retrieve
+official Azure provider documentation for a specific version and resource.
+
+**Command to invoke terraform-expert agent:**
+
+```
+Ask the terraform-expert Copilot agent:
+"Get the documentation for azurerm_[RESOURCE_NAME] provider version [VERSION]"
+
+Example:
+"Get the documentation for azurerm_storage_account provider version 3.90"
+```
+
+**What terraform-expert will return:**
+- Full resource documentation
+- All available arguments (required and optional)
+- All supported attributes (for outputs)
+- Supported nested blocks
+- Default behaviors
+- Known limitations
+
+**Step 3.5.2: Extract and Record Capability Reference**
+
+From the provider documentation, create a reference table:
+
+```markdown
+### Provider Reference: azurerm_storage_account (v3.90)
+
+**Primary Resource:** azurerm_storage_account
+
+**Supported Arguments (from official docs):**
+- account_kind (required) — Defines the Kind of account (Storage, BlobStorage, FileStorage, BlockBlobStorage)
+- account_tier (required) — Defines the Tier (Standard, Premium)
+- account_replication_type (required) — Defines the replication type (LRS, GRS, RAGRS, ZRS, GZRS, RAGZRS)
+- access_tier (optional) — Defines the access tier (Hot, Cool, Archive)
+- https_only (optional) — Boolean for HTTPS only
+- identity {} (optional) — Managed identity block
+- network_rules {} (optional) — Network rules block with: default_action, bypass, ip_rules, virtual_network_subnet_ids
+- customer_managed_key {} (optional) — CMK configuration
+- blob_properties {} (optional) — Blob properties
+- ... [full list from docs]
+
+**Key Capabilities:**
+- ✓ Network isolation via network_rules block (default_action = Deny pattern supported)
+- ✓ Private endpoints (requires separate azurerm_private_endpoint resource)
+- ✓ Managed identity (identity block with system-assigned and user-assigned options)
+- ✓ Customer-managed keys
+- ✓ Encryption at rest (default: Microsoft-managed)
+- ✗ DAPR integration (not a storage account feature; handled at service level)
+
+**Provider Version Available:**
+- Current constraint: ~> 3.90
+- Latest in constraint range: 3.90.5
+- Latest globally: 3.99.0
+- Status: Module is NOT using latest provider (version gap = 9 minor releases behind)
+```
+
+### Step 3.5.3: Assess Provider Version Freshness
+
+After retrieving the documentation, check the provider version status:
+
+```bash
+# Ask terraform-expert:
+"What is the latest available version of the azurerm provider?"
+
+# Possible responses:
+- Latest overall: 3.99.0
+- Latest in your constraint: 3.90.5
+- Current in module: 3.90.0
+```
+
+**Scoring guide:**
+
+| Version Gap | Status | Flag? | Reason |
+|---|---|---|---|
+| Latest (no gap) | 🟢 Current | No | Module is actively maintained |
+| 1-3 minor releases behind | 🟡 Slightly outdated | Warn | Minor updates missed; check release notes for security/fixes |
+| 4+ minor releases behind | 🔴 Outdated | **YES** | Module not maintained; significant version drift; risk of security/compatibility issues |
+
+**Record the finding:**
+
+```
+Module: storage-account
+Provider Version Status: 🔴 OUTDATED
+  Current constraint: ~> 3.90
+  Latest in constraint: 3.90.5 (2 patch versions behind)
+  Latest globally: 3.99.0 (9 minor versions behind)
+  Status: Module should be updated to use ~> 3.95 or ~> 3.99
+  Impact: S6 (Provider Usage Coverage) = Flag for maintenance review
+  Reason: Version gap suggests module is not actively maintained.
+          Missed security patches and feature enhancements in 9 minor releases.
+```
+
+### Step 3.5.4: Document Baseline for Deviation Detection
+
+Save this provider reference documentation in your working session. You will use it in Steps 4-6 to:
+- **Identify supported resource arguments** the module should expose as variables
+- **Flag missing security capabilities** (e.g., network_rules not parameterised when available)
+- **Flag unsupported variable usage** (e.g., module uses attribute not in provider docs)
+- **Justify intentional omissions** (e.g., DAPR not exposed because policy forbids it)
+
+**Example reference format to save:**
+
+```yaml
+module_name: storage-account
+resource_type: azurerm_storage_account
+provider_version: 3.90
+provider_version_latest: 3.99.0
+provider_version_status: OUTDATED (9 minor releases behind)
+
+supported_arguments:
+  - account_kind
+  - account_tier
+  - account_replication_type
+  - access_tier
+  - https_only
+  - identity
+  - network_rules
+  - customer_managed_key
+  - blob_properties
+  - ... [complete list]
+
+key_security_capabilities:
+  - network_rules: supported (PASS if parameterised, PARTIAL if hardcoded)
+  - private_endpoints: supported (but requires separate resource)
+  - managed_identity: supported (PASS if parameterised)
+  - customer_managed_key: supported (PASS if parameterised)
+
+known_limitations:
+  - dapr_settings: NOT supported in azurerm_storage_account (expected; DAPR is app-level, not storage-level)
+```
+
+---
+
 ## Step 4 — Score Each Module Against the Security Controls Scorecard
 
 ### What you are doing
@@ -624,6 +794,105 @@ or any .tf file containing the primary resource definition.
 | Module generates no secrets (e.g. a VNet — nothing to store) | N/A — justify |
 
 **Record your evidence.**
+
+---
+
+### S6 — Provider Usage Coverage & Maintenance Posture
+
+**Question:** Does the module implement supported resource capabilities? Is the provider version current?
+
+**FILE SCOPE:** Use the provider documentation retrieved in Step 3.5 and the resource source code.
+
+**What you are evaluating:**
+
+1. **Capability coverage** — Does the module expose variables for key supported resource capabilities?
+2. **Intentional omissions** — If capabilities are NOT exposed, does the README explicitly explain why?
+3. **Provider version currency** — Is the module using a current provider version or significantly outdated?
+
+**Capability Assessment (against Step 3.5 reference):**
+
+For each **major security/configuration capability** supported by the Azure resource, check:
+- Is it parameterised as a module variable?
+- If NOT, is there a README section explaining why it's omitted?
+
+**Example for azurerm_storage_account:**
+
+```
+Supported capability | Exposed in module? | Justification needed?
+-------------------|-------------------|---------------------
+network_rules       | ✓ Yes             | No — properly parameterised
+identity            | ✓ Yes             | No — properly parameterised
+customer_managed_key| ✗ No              | YES — README must explain
+blob_properties     | ✗ No              | YES — README must explain
+dapr_settings       | ✗ No              | NO — not applicable (not supported by resource)
+```
+
+**Scoring:**
+
+| Finding | Score |
+|---------|-------|
+| All major supported capabilities are parameterised; no unexplained omissions | **Pass** |
+| Most capabilities exposed; 1–2 omissions are explicitly documented in README with business justification | **Partial** |
+| Major capabilities missing without explanation (e.g. no network_rules, no identity support but no README justification) | **Partial/Fail** |
+| Module uses unsupported attributes (not in official docs for the specified version) | **Fail** |
+| Provider version is 4+ minor releases outdated (gap ≥ 4) | **Flag for maintenance review** |
+| Provider version uses unbounded constraint (e.g. `>= 3.0`) | **Partial** |
+
+**Detailed Evaluation Steps:**
+
+1. **Retrieve provider docs from Step 3.5 reference** — You should already have the list of supported arguments/capabilities
+2. **Identify major security/config capabilities** — Focus on: network access, identity, encryption, authentication, observability
+3. **Check module variables** — Does `variables.tf` (or variable files) have corresponding variables?
+4. **If capability is NOT exposed:** Check README for explicit justification
+   - Good: "Network rules not parameterised due to corporate policy requiring all storage accounts to deny public access by default"
+   - Bad: No mention, capability silently omitted
+5. **Check for unsupported attributes** — If module uses `xyz_setting` but official docs don't show this argument, mark as **Fail** with evidence
+6. **Assess provider version** — From Step 3.5, compare current version to latest; flag if gap ≥ 4 minor releases
+
+**Example findings to record:**
+
+```
+Module: storage-account
+Provider: azurerm, version ~> 3.90 (latest: 3.99.0)
+Status: OUTDATED — 9 minor releases behind
+
+Capability Coverage Assessment:
+✓ network_rules → parameterised as var.network_rules
+✓ identity → parameterised as var.identity_type
+✓ customer_managed_key → parameterised as var.key_vault_id
+✓ https_only → parameterised as var.https_only
+✗ blob_properties → NOT parameterised; README section "Blob Properties" states:
+  "Blob properties (lifecycle, versioning, CORS) are intentionally not configurable.
+   Company policy mandates version control for all blobs (automatic)."
+
+Conclusion: S6 = PARTIAL
+  Reason: Major capabilities properly exposed. One omission (blob_properties)
+          has clear README justification. However, provider version is outdated;
+          recommend updating constraint to ~> 3.95 or ~> 3.99 to receive latest
+          security patches and features.
+```
+
+```
+Module: app-service
+Provider: azurerm, version >= 3.0 (unbounded; latest: 3.99.0)
+
+Capability Coverage Assessment:
+✓ identity → parameterised
+✓ https_only → parameterised
+✗ auth_settings → NOT parameterised; README does NOT mention why
+✗ backup_settings → NOT parameterised; README does NOT mention why
+
+Unsupported attributes found:
+⚠ Module uses variable "dapr_enabled" but azurerm_app_service does NOT support this attribute.
+  (DAPR is configured at service deployment level, not resource level.)
+
+Conclusion: S6 = FAIL
+  Reason: (1) Two major capabilities omitted without README explanation.
+          (2) Module uses unsupported attribute "dapr_enabled".
+          (3) Provider version unbounded (security risk). Recommend >= 3.90, < 4.0
+```
+
+**Record your evidence with line numbers and README references.**
 
 ---
 
@@ -1422,6 +1691,59 @@ Result: Q5 = PASS (organized split with clear naming)
 
 ---
 
+### Failure 10: Not Using Provider Documentation for Deviation Detection
+
+**What happens:** Model scores security controls (S1-S5) without referencing the official provider documentation from Step 3.5. Results in:
+- Incorrect N/A scores (flag something as N/A when it's actually supported by the resource)
+- Missed deviations (module omits a security capability but model doesn't know it's available)
+- False passes (model doesn't know a variable is unsupported in that provider version)
+
+Example error:
+```
+S6 — Provider Usage Coverage: PASS
+"The module looks fine to me."
+[But the module uses azurerm_app_service with variable 'dapr_enabled', which is NOT a supported
+ attribute in azurerm_app_service. DAPR is configured at deployment level, not resource level.
+ This should be FAIL, not PASS.]
+```
+
+**Prevention:**
+
+✅ **ALWAYS consult the provider documentation from Step 3.5 before scoring S1-S5.**
+
+1. **Before scoring S1-S5:** Reference the provider docs you retrieved
+2. **For each security control:** Check "Is this capability supported by the resource in this provider version?"
+3. **If NOT supported:** Mark as N/A with justification, don't score as Fail
+4. **If supported but NOT exposed:** Mark as Fail or Partial depending on whether README justifies the omission
+5. **If module uses an attribute not in docs:** Mark as Fail (module is using unsupported attribute for this version)
+
+```
+S6 — Provider Usage Coverage Assessment:
+
+Step 1: From Step 3.5, I have provider documentation for azurerm_app_service v3.90
+
+Step 2: Check major supported capabilities:
+  - auth_settings (supported in docs) → Module exposes this? [Check variables.tf]
+  - identity (supported in docs) → Module exposes this? [Check variables.tf]
+  - backup (supported in docs) → Module exposes this? [Check variables.tf]
+  - dapr_enabled (checking docs...) → NOT FOUND in official azurerm_app_service docs ⚠️
+
+Step 3: Module has variable "dapr_enabled" but this is NOT in official provider docs
+  Module source says: variable "dapr_enabled" { ... }
+  Official docs say: [no dapr_enabled attribute for azurerm_app_service]
+  Conclusion: FAIL — Module uses unsupported attribute
+
+Step 4: Capabilities NOT exposed:
+  - auth_settings: NOT in variables.tf; README does NOT mention why
+  - backup: NOT in variables.tf; README DOES mention: "Backups configured separately via Azure DevOps"
+  Conclusion: PARTIAL (one justified, one not)
+
+Final S6 Score: FAIL
+Reason: Uses unsupported attribute (dapr_enabled) for this provider version
+```
+
+---
+
 ## Summary: The Golden Rules
 
 1. **ALWAYS quote evidence** (line number + 2–3 lines of code)
@@ -1432,3 +1754,5 @@ Result: Q5 = PASS (organized split with clear naming)
 6. **NEVER score a criterion if required file is missing** (use FAIL or skip that criterion)
 7. **ALWAYS verify context** (don't match on substrings alone)
 8. **ALWAYS scan entire files** (report line counts / totals scanned)
+9. **ALWAYS consult provider documentation** (from Step 3.5) before scoring capability coverage
+10. **NEVER assume an attribute is supported** (check official docs; if not found, mark as unsupported)
