@@ -29,3 +29,4 @@ python agent/server.py
 
 - [IMPLEMENTATION.md](IMPLEMENTATION.md) — full architecture and design notes
 - [agent/instructions.md](agent/instructions.md) — agent system prompt
+- [docs/module-acceleration.md](docs/module-acceleration.md) — accelerating enterprise Azure Terraform module creation with Copilot
