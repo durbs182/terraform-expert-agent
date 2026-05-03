@@ -228,17 +228,21 @@ scorecard (Step 5).
 
 #### ⚠️ CRITICAL: Inline Sub-Module Detection
 
-**Terraform module best practice:** A module should be focused, composable, and independently
-versioned. If a module contains other modules as sub-modules, those sub-modules should be
-published separately to the registry and referenced by version, NOT defined inline.
+**Context for this review:** In this company's module strategy, sub-modules are NOT reused
+outside of the published modules they are defined in. Inline sub-modules are therefore
+**acceptable** as internal implementation details — provided they are NOT duplicated across
+multiple parent modules.
 
-**Why this matters:**
-- Inline sub-modules create **tight coupling** — the parent module cannot be reused without
-  understanding internal sub-module structure
-- **No independent versioning** — sub-modules cannot be fixed or improved separately
-- **Maintenance burden** — changes to sub-modules affect all consumers of the parent
-- **Testing complexity** — impossible to unit-test sub-modules in isolation
-- **Documentation gaps** — sub-modules are typically undocumented in the parent README
+**When inline sub-modules are acceptable:**
+- Sub-module logic is specific to ONE parent module only
+- No other parent modules use the same sub-module
+- Sub-module source path is local (`./modules/...`)
+
+**When inline sub-modules should be flagged:**
+- The same sub-module appears in MULTIPLE parent modules (sign of hidden reusability)
+- Sub-module has generic logic that could benefit other teams (naming, tagging, RBAC patterns)
+- Sub-module is complex enough to warrant independent testing/documentation
+- Sub-module README/variables suggest it was designed for reuse
 
 **Detection:** Search the module source code for `module` blocks in:
 - `main.tf` (or the primary resource file if main.tf doesn't exist)
@@ -247,49 +251,66 @@ published separately to the registry and referenced by version, NOT defined inli
 **What to look for:**
 
 ```hcl
-# BAD PATTERN (inline sub-module):
-module "networking" {
-  source = "./modules/vnet"        # Local path, not registry reference
-  ...
-}
-
+# ACCEPTABLE PATTERN (in this context):
 module "diagnostics" {
-  source = "./modules/monitoring"  # Local path — tightly coupled
-  ...
+  source = "./modules/diagnostics"        # Local path, implementation detail
+  parent_resource_id = azurerm_storage_account.this.id
+  # Used ONLY by this parent module
 }
 
-# GOOD PATTERN (published sub-module):
-module "networking" {
-  source = "app.terraform.io/acme-corp/vnet/azurerm"  # Registry reference
-  version = "2.1.0"                                     # Independent version
-  ...
+# FLAG THIS PATTERN (duplicate reuse):
+# Module "rbac" appears in BOTH storage-account.tf AND key-vault.tf
+module "rbac" {
+  source = "./modules/rbac"      # Same sub-module used in multiple places
+  resource_type = var.service   # Generic logic → should be published
+}
+
+# ALWAYS USE PUBLISHED MODULES (not inline):
+module "network_security" {
+  source = "app.terraform.io/acme-corp/network-security/azurerm"
+  version = "3.2.1"                                                    # Independent version
 }
 ```
 
-**Action:** Record inline sub-modules found.
+**Action:** Record inline sub-modules found and check for reuse patterns.
 
 **Example findings to record:**
 
 ```
 Module: storage-account
-❌ INLINE SUB-MODULES DETECTED:
+✓ ACCEPTABLE: Inline sub-modules detected (internal use only):
    - main.tf:15-18:  module "diagnostics" { source = "./modules/diagnostics" }
-   - main.tf:20-25:  module "access_tier" { source = "./modules/access-control" }
+   - main.tf:20-25:  module "monitoring" { source = "./modules/monitoring" }
    
-Impact: Q2 (Variable Completeness) / Q5 (File Layout) = Partial/Fail
-Reason: Sub-modules are local and tightly coupled. Should be published separately
-        to the registry and referenced by version.
+Assessment: Each sub-module appears ONLY in this parent module.
+           No reuse detected across other modules in catalogue.
+Impact: Q5 (File Layout) = Pass
+Reason: Internal composition is acceptable; no duplication across modules.
 ```
 
 ```
-Module: key-vault
-✓ NO INLINE SUB-MODULES: Uses published registry modules only.
-   - Example: module "rbac" { source = "app.terraform.io/acme-corp/rbac/azurerm", version = "1.5.0" }
-Impact: Q2 (Variable Completeness) = Pass
+Module: app-service
+❌ FLAG: Inline sub-modules with reuse pattern detected:
+   - main.tf:12-16:  module "rbac" { source = "./modules/rbac" }
+   - ALSO FOUND IN: key-vault module (same rbac sub-module)
+   
+Assessment: "rbac" sub-module appears in MULTIPLE parent modules.
+           Suggests either: (a) hidden reusability, or (b) duplicate code.
+Impact: Q2 (Variable Completeness) / Q5 (File Layout) = Partial
+Reason: Generic logic across multiple modules should be published separately
+        to the registry OR consolidated into a shared utility module.
+```
+
+```
+Module: networking
+✓ ACCEPTABLE: Uses published registry modules (best practice):
+   - Example: module "azure_firewall" { source = "app.terraform.io/acme-corp/firewall/azurerm", version = "1.5.0" }
+Impact: Q5 (File Layout) = Pass
 ```
 
 This finding will be recorded as a **Q2 (Variable Completeness)** or **Q5 (File Layout)** issue
-in the Code Quality scorecard (Step 5), depending on architectural significance.
+in the Code Quality scorecard (Step 5), depending on the reuse pattern and architectural
+significance.
 
 ---
 
