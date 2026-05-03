@@ -98,10 +98,14 @@ EOF
 
 | Request type | Method | Expected time |
 |---|---|---|
-| Registry lookup (single tool) | Direct bash inline Python | 3-5s |
-| Multiple tool calls (chain in one script) | Direct bash inline Python | 5-15s |
+| TFC API operation (workspaces, runs, vars) | `curl` direct to TFC REST API | ~200ms ✅ |
+| Registry lookup (provider/module docs) | Direct bash inline Python + MCP | 3-5s |
+| Multiple registry calls (chain in one script) | Direct bash inline Python + MCP | 5-15s |
 | Multi-file code generation + tool calls | Direct bash (write files with `tee`) | 10-20s |
 | Unavoidable complex reasoning subagent | `task` agent, `sync` mode preferred | 30-75s |
+
+**Rule: NEVER use the MCP Python script for TFC API operations. Use `curl` instead —
+it is 15-25x faster and requires zero subprocess overhead. See TFC API Reference below.**
 
 **Rule: Only use a subagent when multi-file code generation AND complex reasoning
 cannot fit in a single bash script. Never use a subagent for lookups or single tool calls.**
@@ -115,20 +119,20 @@ Is this a Terraform / IaC / infrastructure request?
 │
 ├─ NO  → Respond normally. Do not invoke Terraform tools.
 │
-└─ YES → Is TFE_TOKEN available (workspace/run tools responding)?
+└─ YES → What kind of operation?
          │
-         ├─ YES (authenticated)
-         │   ├─ Finding a provider or module?
-         │   │   └─ Search private registry first → fall back to public if no results
-         │   ├─ Workspace / run / variable / state operation?
-         │   │   └─ Use terraform toolset (list/get before mutate)
-         │   │       └─ Destructive op? → REQUIRE explicit user confirmation first
-         │   └─ Code generation?
-         │       └─ get_provider_details → search_modules → write code → validate
+         ├─ TFC workspace / run / variable / state operation?
+         │   ├─ Is TFE_TOKEN set?
+         │   │   ├─ YES → Use curl to TFC REST API (see TFC API Reference below)
+         │   │   │         Destructive op? → REQUIRE explicit user confirmation first
+         │   │   └─ NO  → Inform user TFE_TOKEN is required; offer registry help only
          │
-         └─ NO (unauthenticated)
-             Use registry toolset (public) only.
-             Inform user that workspace/run operations require TFE_TOKEN.
+         ├─ Finding a provider or module? (registry docs)
+         │   ├─ TFE_TOKEN set? → Search private registry first (MCP), fall back to public
+         │   └─ No token?     → Search public registry only (MCP Python script)
+         │
+         └─ Code generation?
+             └─ get_provider_details (MCP) → search_modules (MCP) → write code → validate
 ```
 
 ### Destructive Operations — MANDATORY Confirmation
@@ -253,11 +257,208 @@ Without TFE_TOKEN: use public registry tools only.
 
 ---
 
+## TFC API Reference — Use curl for ALL TFC Operations
+
+**Base URL:** `https://app.terraform.io/api/v2`
+**Auth header:** `-H "Authorization: Bearer $TFE_TOKEN"`
+**Write header:** `-H "Content-Type: application/vnd.api+json"` (POST/PATCH only)
+**Parse output:** pipe to `| jq '...'`
+
+### Organisations
+
+```bash
+# List orgs
+curl -s -H "Authorization: Bearer $TFE_TOKEN" \
+  https://app.terraform.io/api/v2/organizations \
+  | jq '.data[] | {name: .attributes.name, email: .attributes.email}'
+```
+
+### Workspaces
+
+```bash
+# List workspaces in org
+curl -s -H "Authorization: Bearer $TFE_TOKEN" \
+  https://app.terraform.io/api/v2/organizations/ORG/workspaces \
+  | jq '.data[] | {name: .attributes.name, id: .id, tf_version: .attributes["terraform-version"], execution_mode: .attributes["execution-mode"]}'
+
+# Get workspace by name
+curl -s -H "Authorization: Bearer $TFE_TOKEN" \
+  https://app.terraform.io/api/v2/organizations/ORG/workspaces/WORKSPACE_NAME \
+  | jq '.data | {id: .id, name: .attributes.name, locked: .attributes.locked, resource_count: .attributes["resource-count"]}'
+
+# Create workspace ⚠ (confirm first)
+curl -s -X POST \
+  -H "Authorization: Bearer $TFE_TOKEN" \
+  -H "Content-Type: application/vnd.api+json" \
+  https://app.terraform.io/api/v2/organizations/ORG/workspaces \
+  -d '{"data":{"type":"workspaces","attributes":{"name":"WORKSPACE_NAME","execution-mode":"remote"}}}' \
+  | jq '.data | {id: .id, name: .attributes.name}'
+
+# Update workspace ⚠ (confirm first — need workspace ID)
+curl -s -X PATCH \
+  -H "Authorization: Bearer $TFE_TOKEN" \
+  -H "Content-Type: application/vnd.api+json" \
+  https://app.terraform.io/api/v2/workspaces/WS_ID \
+  -d '{"data":{"type":"workspaces","attributes":{"terraform-version":"1.6.0"}}}' \
+  | jq '.data.attributes | {name: .name, tf_version: .["terraform-version"]}'
+```
+
+### Variables
+
+```bash
+# List workspace variables (need workspace ID)
+curl -s -H "Authorization: Bearer $TFE_TOKEN" \
+  https://app.terraform.io/api/v2/workspaces/WS_ID/vars \
+  | jq '.data[] | {id: .id, key: .attributes.key, value: .attributes.value, sensitive: .attributes.sensitive, category: .attributes.category}'
+
+# Create workspace variable ⚠ (confirm first)
+# category: "terraform" for tf vars, "env" for environment vars
+curl -s -X POST \
+  -H "Authorization: Bearer $TFE_TOKEN" \
+  -H "Content-Type: application/vnd.api+json" \
+  https://app.terraform.io/api/v2/workspaces/WS_ID/vars \
+  -d '{"data":{"type":"vars","attributes":{"key":"VAR_NAME","value":"VAR_VALUE","category":"terraform","sensitive":false}}}' \
+  | jq '.data | {id: .id, key: .attributes.key}'
+
+# Update variable ⚠ (confirm first)
+curl -s -X PATCH \
+  -H "Authorization: Bearer $TFE_TOKEN" \
+  -H "Content-Type: application/vnd.api+json" \
+  https://app.terraform.io/api/v2/workspaces/WS_ID/vars/VAR_ID \
+  -d '{"data":{"type":"vars","id":"VAR_ID","attributes":{"value":"NEW_VALUE"}}}' \
+  | jq '.data.attributes | {key: .key, value: .value}'
+```
+
+### Runs
+
+```bash
+# List runs for a workspace
+curl -s -H "Authorization: Bearer $TFE_TOKEN" \
+  "https://app.terraform.io/api/v2/workspaces/WS_ID/runs?page[size]=10" \
+  | jq '.data[] | {id: .id, status: .attributes.status, created: .attributes["created-at"]}'
+
+# Get run details
+curl -s -H "Authorization: Bearer $TFE_TOKEN" \
+  https://app.terraform.io/api/v2/runs/RUN_ID \
+  | jq '.data | {id: .id, status: .attributes.status, plan_id: .relationships.plan.data.id, apply_id: .relationships.apply.data.id}'
+
+# Create run (trigger plan) ⚠ (confirm first — need workspace ID)
+curl -s -X POST \
+  -H "Authorization: Bearer $TFE_TOKEN" \
+  -H "Content-Type: application/vnd.api+json" \
+  https://app.terraform.io/api/v2/runs \
+  -d '{"data":{"type":"runs","attributes":{"message":"Triggered by Copilot"},"relationships":{"workspace":{"data":{"type":"workspaces","id":"WS_ID"}}}}}' \
+  | jq '.data | {id: .id, status: .attributes.status}'
+
+# Discard run ⚠ (confirm first)
+curl -s -X POST \
+  -H "Authorization: Bearer $TFE_TOKEN" \
+  -H "Content-Type: application/vnd.api+json" \
+  https://app.terraform.io/api/v2/runs/RUN_ID/actions/discard \
+  -d '{"comment":"Discarded by Copilot"}'
+```
+
+### Plans & Applies
+
+```bash
+# Get plan details
+curl -s -H "Authorization: Bearer $TFE_TOKEN" \
+  https://app.terraform.io/api/v2/plans/PLAN_ID \
+  | jq '.data.attributes | {status: .status, resource_additions: .["resource-additions"], resource_changes: .["resource-changes"], resource_destructions: .["resource-destructions"]}'
+
+# Get plan logs (streaming text — pipe directly)
+curl -s -H "Authorization: Bearer $TFE_TOKEN" \
+  https://app.terraform.io/api/v2/plans/PLAN_ID/logs
+
+# Get apply details
+curl -s -H "Authorization: Bearer $TFE_TOKEN" \
+  https://app.terraform.io/api/v2/applies/APPLY_ID \
+  | jq '.data.attributes | {status: .status, resource_additions: .["resource-additions"], resource_changes: .["resource-changes"], resource_destructions: .["resource-destructions"]}'
+
+# Get apply logs
+curl -s -H "Authorization: Bearer $TFE_TOKEN" \
+  https://app.terraform.io/api/v2/applies/APPLY_ID/logs
+```
+
+### Variable Sets
+
+```bash
+# List variable sets in org
+curl -s -H "Authorization: Bearer $TFE_TOKEN" \
+  https://app.terraform.io/api/v2/organizations/ORG/varsets \
+  | jq '.data[] | {id: .id, name: .attributes.name, global: .attributes.global}'
+
+# Create variable set
+curl -s -X POST \
+  -H "Authorization: Bearer $TFE_TOKEN" \
+  -H "Content-Type: application/vnd.api+json" \
+  https://app.terraform.io/api/v2/organizations/ORG/varsets \
+  -d '{"data":{"type":"varsets","attributes":{"name":"VARSET_NAME","description":"","global":false}}}' \
+  | jq '.data | {id: .id, name: .attributes.name}'
+
+# Add variable to variable set ⚠
+curl -s -X POST \
+  -H "Authorization: Bearer $TFE_TOKEN" \
+  -H "Content-Type: application/vnd.api+json" \
+  https://app.terraform.io/api/v2/varsets/VARSET_ID/relationships/vars \
+  -d '{"data":{"type":"vars","attributes":{"key":"VAR_NAME","value":"VAR_VALUE","category":"terraform","sensitive":false}}}' \
+  | jq '.data | {id: .id, key: .attributes.key}'
+
+# Attach variable set to workspaces ⚠
+curl -s -X POST \
+  -H "Authorization: Bearer $TFE_TOKEN" \
+  -H "Content-Type: application/vnd.api+json" \
+  https://app.terraform.io/api/v2/varsets/VARSET_ID/relationships/workspaces \
+  -d '{"data":[{"type":"workspaces","id":"WS_ID"}]}'
+```
+
+### Tags & Permissions
+
+```bash
+# Read workspace tags
+curl -s -H "Authorization: Bearer $TFE_TOKEN" \
+  https://app.terraform.io/api/v2/workspaces/WS_ID/relationships/tags \
+  | jq '.data[].attributes.name'
+
+# Add workspace tags
+curl -s -X POST \
+  -H "Authorization: Bearer $TFE_TOKEN" \
+  -H "Content-Type: application/vnd.api+json" \
+  https://app.terraform.io/api/v2/workspaces/WS_ID/relationships/tags \
+  -d '{"data":[{"type":"tags","attributes":{"name":"TAG_NAME"}}]}'
+
+# Check token permissions
+curl -s -H "Authorization: Bearer $TFE_TOKEN" \
+  https://app.terraform.io/api/v2/account/details \
+  | jq '.data.attributes | {username: .username, "two-factor": .["two-factor"]}'
+```
+
+### Workflow Pattern — Always list/get before mutate
+
+```bash
+# 1. Get workspace ID (needed for most operations)
+WS_ID=$(curl -s -H "Authorization: Bearer $TFE_TOKEN" \
+  https://app.terraform.io/api/v2/organizations/ORG/workspaces/WORKSPACE_NAME \
+  | jq -r '.data.id')
+
+# 2. Check for in-progress runs before triggering new one
+curl -s -H "Authorization: Bearer $TFE_TOKEN" \
+  "https://app.terraform.io/api/v2/workspaces/$WS_ID/runs?filter[status]=planning,applying,pending" \
+  | jq '.data | length'
+
+# 3. List vars before creating/updating
+curl -s -H "Authorization: Bearer $TFE_TOKEN" \
+  https://app.terraform.io/api/v2/workspaces/$WS_ID/vars \
+  | jq '.data[] | {id: .id, key: .attributes.key}'
+```
+
+---
+
 ## Workspace Operations
 
-- Always call `get_workspace_details` before modifying a workspace
-- Call `list_workspace_variables` before creating or updating variables
-- Call `list_runs` to check for in-progress runs before triggering a new one
+- Always get workspace ID first: `curl .../organizations/ORG/workspaces/NAME | jq -r '.data.id'`
+- List variables before creating or updating: `curl .../workspaces/WS_ID/vars`
+- Check for in-progress runs before triggering new one: filter by status `planning,applying,pending`
 
 ---
 
