@@ -163,6 +163,90 @@ from the best patterns observed, with explicit anti-pattern list.
 
 ---
 
+## Phase 1 Refinement — Premium vs Cheap Model Validation
+
+Before using low-cost models (GPT-4o mini, Claude Haiku) in production, the instructions in
+`phase1-catalogue-review.md` must be validated to ensure they deliver 95%+ scoring accuracy
+parity with premium models (GPT-4, Claude Sonnet).
+
+### The Testing Framework
+
+| Phase | Objective | Inputs | Outputs |
+|-------|-----------|--------|---------|
+| **A: Setup** | Select real test modules; prepare environment | Module catalogue | Test module list + testing plan |
+| **B: Iteration 1 Baseline** | Run Phase 1 with Premium (ground truth) + Cheap model; identify divergences | Test modules + instructions | Comparison report; common failure modes |
+| **C: Improvements** | Fix ambiguous instructions; add explicit examples; close gaps | Divergence analysis | Refined instructions v2 |
+| **D: Iteration 2 Retest** | Retest with improved instructions; measure mismatch reduction | Test modules + instructions v2 | Updated comparison report; success metrics |
+| **E: Sign-Off** | Document results; deliver final instructions + cost/benefit analysis | Iteration 2 results | Final instructions + ROI report |
+
+### Success Criteria
+
+- ✅ **Accuracy**: Cheap model scores match Premium on ≥95% of criteria (≤1 mismatch per 20-criterion scorecard per module)
+- ✅ **Fixability**: Instruction divergences are systematically fixable (not a fundamental model capability gap)
+- ✅ **ROI**: Cheap model cost is <50% of premium model cost per module review
+- ✅ **Convergence**: Instructions stabilize by Iteration 3 (not endlessly unstable)
+
+### Key Testing Dimensions
+
+| Dimension | What to Measure | Red Flags |
+|-----------|-----------------|-----------|
+| **Accuracy** | Scoring match on 21 criteria (S1-S7, Q1-Q8, R1-R7) × N test modules | >1 mismatch per 20-criterion scorecard |
+| **Failure Modes** | Where cheap models diverge (search failures, scoring confusion, hallucinations) | Pattern of same error across modules |
+| **Instruction Clarity** | Can models parse + follow without ambiguity? | Models give conflicting interpretations |
+| **Efficiency** | Time + token cost per module (cheap vs premium) | Cheap model >60% of premium cost |
+
+### Phase B: Iteration 1 Baseline — Recommended Test Modules
+
+Select 2-3 real Azure modules from your catalogue representing different complexity levels:
+
+1. **Storage Account** — Simple: 5-8 outputs, straightforward variables, few security constraints
+2. **Key Vault** — Medium: 10+ outputs, secrets handling, access policies, audit requirements
+3. **App Service / Kubernetes** — Complex: 20+ outputs, multiple sub-resources, RBAC integration
+
+Run Phase 1 review on each:
+- **Premium model**: `gpt-4` or `claude-sonnet` — establishes ground truth
+- **Cheap model**: `gpt-4o-mini` or `claude-haiku` — test target
+
+Compare outputs on all 21 criteria. Document:
+- Which criteria matched (✅)
+- Which criteria diverged (❌) — how?
+- Scores (e.g. "Premium: 18/21 Pass, Cheap: 17/21 Pass")
+- Common error patterns (e.g. "cheap model failed to search provider docs")
+
+### Phase C: Improvements — Guidance
+
+When analyzing divergences, categorize them as:
+
+| Category | Fix Strategy |
+|----------|---------------|
+| **Ambiguous criterion** | Add explicit Pass/Partial/Fail code examples; decision trees; golden rules |
+| **Search failure** | Add concrete file names/patterns cheap model can find without heuristics |
+| **Scoring confusion** | Add step-by-step checklist; reduce multi-step logic to discrete yes/no checks |
+| **Hallucination** | Add "do not assume" warnings; require explicit evidence from code |
+| **File pinning** | Remove "check only main.tf" instructions; say "search all .tf files" |
+| **Provider docs gap** | Add terraform-expert agent reference + exact tool call pattern |
+
+### Phase D: Iteration 2 Retest
+
+After improvements, repeat Phase B with:
+- Same test modules (to measure improvement)
+- Updated instructions v2
+- New comparison report
+
+Track delta: "Before: 17/21 Pass (Cheap), After: 20/21 Pass (Cheap)" = +3 criteria fixed.
+
+### Expected Outcomes
+
+- **Instruction updates**: 2-5 criteria clarified per iteration
+- **Convergence speed**: Typically 2 iterations (B→C→D) to reach 95%+ parity
+- **Cost-benefit**: Cheap model review typically 30-40% of premium cost post-validation
+
+> **Note**: This testing process is independent of Phases 2-6. Once Phase 1 instructions are
+> validated and locked, Phases 2-6 (code generation, validation, publication) proceed with 
+> the validated instructions.
+
+---
+
 ## Phase 2 — Provider Docs Retrieval
 
 Use the MCP registry tools to pull the full resource schema for the target Azure service.
