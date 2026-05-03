@@ -532,6 +532,63 @@ To make this framework actionable, document where modules, repos, and workspaces
 
 ---
 
+## 🎯 TODO: GitHub Actions & CI/CD Pipeline
+
+Pre-configured GitHub Actions enforce code quality, validation, and integration testing for all module repositories:
+
+**Linting & Validation Actions:**
+- [ ] `terraform validate` step in CI pipeline
+- [ ] `terraform fmt` check (fail on unformatted code)
+- [ ] `checkov` security scanning configuration (rules, severity thresholds)
+- [ ] `tfsec` static analysis configuration (rules, exclusions)
+- [ ] Provider schema validation (prevent breaking changes to outputs)
+- [ ] Documentation validation (README updates required with code changes)
+- [ ] Commit message linting (enforce conventional commits pattern)
+
+**Integration Testing with Chef InSpec:**
+- [ ] Chef InSpec test framework setup and location (`test/`, `inspec/`, or `spec/`)
+- [ ] InSpec profile structure and naming conventions
+- [ ] Integration test runner in GitHub Actions CI (trigger after `terraform apply`)
+- [ ] Test environment provisioning strategy (ephemeral Azure resources for testing)
+- [ ] Test data and fixtures management (secrets, test resource IDs)
+- [ ] InSpec test coverage expectations (% of resources covered)
+- [ ] Failure handling — rollback strategy if tests fail post-apply
+- [ ] Integration test duration target (timeout thresholds)
+- [ ] Test results reporting (GitHub Check Runs, test summary in PR)
+
+**CI/CD Workflow:**
+- [ ] Workflow trigger rules (on PR, on merge to main, on release tag)
+- [ ] Approval gates (manual approval before `terraform apply` in CI)
+- [ ] Notification on failure (Slack, email, GitHub teams)
+- [ ] Artifact retention (plan logs, test reports, state snapshots)
+- [ ] Automated version bumping and release tagging
+- [ ] Registry publication workflow (auto-publish on tag)
+- [ ] Status badge for CI/CD health on README
+
+**Module Creation Requirements:**
+- [ ] New modules MUST include skeleton InSpec test profile
+- [ ] Integration tests MUST cover all resource types created
+- [ ] Test controls MUST validate resource attributes (names, tags, settings)
+- [ ] Destructive tests (cleanup after verify) documented in test code
+- [ ] Test fixture data or seed files included in module repo
+- [ ] CI pipeline template available for quick module repo setup
+
+**Future Enhancement — Module Evaluation:**
+- [ ] Phase 2+ evaluation: InSpec test coverage assessment (Q9 code quality criterion)
+- [ ] Coverage metric: % of Azure resources with test controls
+- [ ] Evaluation criteria:
+  - [ ] All resources have at least one control assertion
+  - [ ] Critical attributes verified (tags, encryption, network settings)
+  - [ ] Controls properly structured and maintainable
+  - [ ] Test documentation included (test intent comments)
+- [ ] Failure scenarios: module review flags if:
+  - [ ] Integration tests missing or empty
+  - [ ] Tests are not maintained with code changes
+  - [ ] Test coverage < 80% of resources
+  - [ ] Test controls too generic or trivial
+
+---
+
 ## Related Resources
 
 - [HashiCorp Module Development Standards](https://developer.hashicorp.com/terraform/language/modules/develop)
