@@ -191,6 +191,41 @@ For each module, note which of these files exist:
 
 A missing file is itself a finding that will affect Q5 (file layout) scoring.
 
+#### ⚠️ CRITICAL: File Naming Convention Check
+
+**Terraform module best practice:** All module logic should be in `main.tf`. This is the
+standard entry point that both practitioners and tools (Terraform validators, linters,
+documentation generators) expect.
+
+**If the module does NOT have a `main.tf`:** check the root directory for named .tf files
+instead (e.g. `function.tf`, `aca.tf`, `storage.tf`, `networking.tf`, or any other
+service-specific .tf file).
+
+**Action:** Record which file(s) contain the primary resource definitions. If the module
+uses named .tf files instead of `main.tf`, **flag this as a Q5 code quality deviation**.
+
+**Example findings to record:**
+
+```
+Module: app-service
+❌ DEVIATION FOUND: No main.tf. Primary resources in:
+   - app-service.tf (lines 1-45)
+   - monitoring.tf (lines 46-92)
+   
+Impact: Q5 (File Layout) = Partial/Fail
+Reason: Non-standard layout violates Terraform module best practice.
+        Module is harder to navigate and may confuse automation tools.
+```
+
+```
+Module: key-vault
+✓ STANDARD: Has main.tf with primary resource definitions.
+Impact: Q5 (File Layout) = Pass
+```
+
+This deviation will be scored under **Q5 — File Layout** as part of the Code Quality
+scorecard (Step 5).
+
 ---
 
 ## Step 4 — Score Each Module Against the Security Controls Scorecard
