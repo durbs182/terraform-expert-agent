@@ -207,28 +207,67 @@ for every control for every module. Use exactly these scores:
 - **N/A** — the control is architecturally irrelevant to this specific service (you
   must write a one-line justification for every N/A)
 
+### ⚠️ CRITICAL: Evidence Requirements
+
+**For EVERY score, you MUST record evidence.** Do not guess. Do not assume.
+
+- **Quote exact line numbers** from source code (e.g. "main.tf:42")
+- **Quote 2–3 lines of code** showing the pattern you found (or NOT FOUND)
+- **If you cannot find the pattern, write "NOT FOUND IN FILES" and mark the criterion Fail/N/A**
+
+**Example:**
+
+```
+S1 — Network Isolation: PARTIAL
+Evidence: main.tf:28-30
+  network_rules {
+    default_action = "Allow"    ← Problem: defaults to Allow, not Deny
+  }
+variable "allowed_ip_ranges" is not defined — caller cannot restrict access.
+```
+
+**Failure mode to avoid:** Making up evidence. If you don't see `network_rules`, don't claim it exists.
+
 ### S1 — Network Isolation
 
 **Question:** Does the module restrict network access by default?
 
-**What to look for in `main.tf` and `variables.tf`:**
+**FILE SCOPE:** Check ONLY `main.tf` and `variables.tf`
+
+**What to look for in `main.tf`:**
 
 - Look for any of: `network_rules`, `network_acls`, `ip_rules`, `virtual_network_subnet_ids`,
   `service_endpoints`, `subnet_id`, `vnet_integration`, `network_profile`
-- Check whether `public_network_access_enabled` is present and what its default is
-- Check whether there is a `default_action = "Deny"` or `default_action = "Allow"` in
-  network rules blocks
+- Specifically search for `default_action = "Deny"` or `default_action = "Allow"`
+
+**CONCRETE EXAMPLES (what to search for):**
+
+```hcl
+# PASS pattern:
+resource "azurerm_storage_account" "this" {
+  network_rules {
+    default_action             = "Deny"  ← Hardcoded restriction
+    bypass                     = ["AzureServices"]
+  }
+}
+
+# FAIL pattern:
+# File has NO network_rules block at all, OR:
+network_rules {
+  default_action = "Allow"   ← Open by default
+}
+```
 
 **Scoring:**
 
 | Finding | Score |
 |---------|-------|
-| Network rules block with `default_action = "Deny"` and no variable to change it | Pass |
+| Network rules block with `default_action = "Deny"` hardcoded | Pass |
 | Network rules block exists but `default_action = "Allow"` by default | Partial |
 | Variable to set subnet IDs / IP rules exists but defaults to empty (no restriction) | Partial |
-| No network configuration at all | Fail |
+| No `network_rules` block found in main.tf (NOT FOUND) | Fail |
 
-**Record your evidence:** Copy the relevant 2–5 lines from `main.tf` that support your score.
+**Record your evidence:** Line number + 2–3 lines of code.
 
 ---
 
@@ -236,23 +275,48 @@ for every control for every module. Use exactly these scores:
 
 **Question:** Does the module support or create private endpoints?
 
-**What to look for:**
+**FILE SCOPE:** Check ONLY `main.tf` (for resource) and `variables.tf` (for variables)
 
-- Search `main.tf` for `azurerm_private_endpoint`
-- Search `variables.tf` for `private_endpoint_subnet_id`, `enable_private_endpoint`,
-  `private_dns_zone_ids`
+**EXACT SEARCH PATTERN:**
+
+In `main.tf`, search line-by-line for: `azurerm_private_endpoint`
+
+In `variables.tf`, search for ANY variable name containing:
+  - `"private_endpoint"` (exact substring)
+  - `"private"` AND `"endpoint"` (both must appear in name)
+
+**CONCRETE EXAMPLES:**
+
+```hcl
+# PASS pattern:
+resource "azurerm_private_endpoint" "this" {
+  name          = "pe-storage"
+  ...
+}
+
+# PARTIAL pattern:
+variable "private_endpoint_subnet_id" {
+  type    = string
+  default = ""    ← Optional, defaults to empty (no endpoint created)
+}
+
+# FAIL pattern:
+# No azurerm_private_endpoint resource
+# No variable with "private_endpoint" in the name
+```
 
 **Scoring:**
 
 | Finding | Score |
 |---------|-------|
-| `azurerm_private_endpoint` resource created in module with required subnet variable | Pass |
-| Variable `private_endpoint_subnet_id` exists and is used, but endpoint creation is optional | Partial |
-| Variable exists but is not connected to any resource | Fail |
-| No private endpoint support | Fail |
-| Service is internal-only by architecture (e.g. a VNet-internal load balancer) | N/A — justify |
+| `azurerm_private_endpoint` resource created in module (found in main.tf) | Pass |
+| Variable `private_endpoint_subnet_id` or similar exists AND is used in main.tf | Pass |
+| Variable exists in variables.tf BUT NOT used in main.tf (variable defined but ignored) | Partial |
+| Variable exists AND optional (has default value) | Partial |
+| No private endpoint support found (NOT FOUND) | Fail |
+| Service is internal-only by architecture (e.g. VNet-internal load balancer) | N/A — justify |
 
-**Record your evidence.**
+**Record your evidence:** Line numbers + exact variable/resource names found.
 
 ---
 
@@ -787,3 +851,282 @@ them with the team before proceeding to Phase 2.
 | R5 | Usage example present | At least one module block example? |
 | R6 | Usage example accurate | Source, variable names, required vars correct? |
 | R7 | Security controls documented | Security section in README? |
+
+---
+
+## 🚨 Cheap Model Failure Modes & How to Avoid Them
+
+This section documents the most common mistakes low-cost models make and how to prevent them.
+
+### Failure 1: Hallucinating Evidence ("Making up code")
+
+**What happens:** Model claims to find a pattern that doesn't exist in the module.
+
+Example error:
+```
+S1 - Network Isolation: PASS
+Evidence: main.tf has network_rules with default_action = "Deny"
+[But when you check main.tf, there is NO network_rules block at all]
+```
+
+**Prevention:**
+
+✅ **ALWAYS quote the exact line number and code.**
+
+❌ Bad: "The module has network isolation."
+✅ Good: "main.tf:42-45 shows: `network_rules { default_action = "Deny" }`"
+
+❌ Bad: "I found a private endpoint resource."
+✅ Good: "main.tf:18: `resource "azurerm_private_endpoint" "this" {`"
+
+**If you cannot find the pattern, say so explicitly:**
+
+```
+S2 - Private Endpoints: FAIL
+Evidence: Searched entire main.tf for "azurerm_private_endpoint" — NOT FOUND.
+Searched variables.tf for variable names containing "private_endpoint" — NOT FOUND.
+Conclusion: No private endpoint support.
+```
+
+---
+
+### Failure 2: Incomplete File Search ("Giving up early")
+
+**What happens:** Model checks only the first few lines or gives up searching.
+
+Example error:
+```
+Q1 - Variable Naming: PASS
+"I scanned variables.tf and all variables look good."
+[But variables.tf is 200 lines long, model only scanned first 50]
+```
+
+**Prevention:**
+
+✅ **Report a TOTAL COUNT.**
+
+❌ Bad: "Variables look like snake_case."
+✅ Good: "Checked all 18 variables in variables.tf. Line count: 1-250. All use snake_case except variable `laResource` at line 42 (camelCase — FAIL on Q1)."
+
+**For Q1, Q2, Q3, Q7 — provide a count:**
+
+```
+Q2 - Variable Completeness: PARTIAL
+Total variables in variables.tf: 18
+Variables WITH both type and description: 16
+Variables MISSING description: 2 (lines 45, 67)
+Score: 2/18 missing = 11% → Passes <20% threshold → PARTIAL (almost Pass)
+```
+
+---
+
+### Failure 3: Ambiguous Decision Boundaries
+
+**What happens:** Model cannot decide between Pass/Partial/Fail and guesses.
+
+Example error:
+```
+Q3 - Validation Blocks: PASS
+"Most enum variables have validation, so I scored Pass."
+[But the scoring rule says "all enum vars MUST have validation" — should be PARTIAL or FAIL]
+```
+
+**Prevention:**
+
+✅ **Follow the EXACT scoring table. Do not interpret.**
+
+For Q3:
+```
+Scoring rule (EXACT — do not change):
+  - PASS: All enum-accepting string variables have validation blocks
+  - PARTIAL: Some enum variables have validation, others do not
+  - FAIL: No enum variables have validation blocks
+
+My findings:
+  - Enum variables: account_tier, access_tier, replication_type (3 total)
+  - With validation blocks: account_tier, access_tier (2 of 3)
+  - Without validation: replication_type (1 of 3 missing)
+
+Scoring: Since 1 out of 3 enum variables is missing validation → PARTIAL (matches rule 2)
+```
+
+---
+
+### Failure 4: False Positives (Seeing patterns that aren't there)
+
+**What happens:** Model matches on substring or partial pattern, not the actual criterion.
+
+Example error:
+```
+S5 - Key Vault Integration: PASS
+Evidence: "variable name contains 'vault' so module uses Key Vault"
+[But the actual variable is vault_admin_username, which is just a name prefix, not Key Vault integration]
+```
+
+**Prevention:**
+
+✅ **Check CONTEXT, not just substrings.**
+
+❌ Bad: "Found 'vault' in the code → uses Key Vault"
+✅ Good: "Found variable vault_admin_username (line 50) but it's just a string — not azurerm_key_vault_secret. No actual Key Vault integration."
+
+✅ **For S5 specifically:**
+
+```
+S5 - Key Vault Integration: FAIL
+Search for actual patterns:
+  - azurerm_key_vault_secret resource? NOT FOUND
+  - var.key_vault_id used to write secrets? NOT FOUND
+  - @Microsoft.KeyVault(...) pattern in outputs? NOT FOUND
+  - Outputs with sensitive=true? Found at line 120 (password output marked sensitive)
+  
+Decision: Output is protected but no actual Key Vault integration → FAIL
+(Module exposes sensitive output, even if marked sensitive — lacks proper Key Vault)
+```
+
+---
+
+### Failure 5: Scoring Both Pass AND Fail
+
+**What happens:** Model scores the same criterion with contradictory evidence.
+
+Example error:
+```
+Q7 - Tagging: PASS
+Evidence: "var.tags exists" (true)
+
+But also:
+Evidence: "var.tags not merged with required tags" (also true)
+
+Result: Confused scoring
+```
+
+**Prevention:**
+
+✅ **Make a decision tree:**
+
+```
+Q7 - Tagging Decision Tree:
+
+IF no tags variable exists THEN → FAIL
+  └─ verified: no "variable \"tags\"" in variables.tf
+
+ELSE IF tags variable exists BUT not merged in locals THEN → PARTIAL
+  └─ verified: var.tags = map(string) at line 15 but locals block (line 32) does NOT merge
+
+ELSE IF tags merged in locals AND applied to all resources THEN → PASS
+  └─ verified: locals merge var.tags with required_tags at line 32,
+     and all azurerm_* resources use local.tags argument
+
+My module: Has var.tags (line 15), but locals block NOT merged → PARTIAL
+```
+
+---
+
+### Failure 6: README Table Mismatches
+
+**What happens:** Model compares README inputs/outputs table to .tf files but doesn't check for drift.
+
+Example error:
+```
+R3 - Inputs table accurate: PASS
+[But README lists variable "account_kind" while variables.tf defines "account_tier"]
+```
+
+**Prevention:**
+
+✅ **MATCH variable names exactly.**
+
+```
+R3 - Inputs Table Accuracy:
+
+Variables in variables.tf (total: 18):
+  - resource_group_name (line 5)
+  - account_tier (line 10)
+  - https_only (line 15)
+  ... [full list]
+
+Variables in README Inputs Table:
+  - resource_group_name ✓
+  - account_kind [MISMATCH — should be account_tier] ✗
+  - https_only ✓
+
+Result: 1 mismatch out of 18 variables → R3 = FAIL
+```
+
+---
+
+### Failure 7: N/A Without Justification
+
+**What happens:** Model uses N/A score but forgets to explain why.
+
+Example error:
+```
+S2 - Private Endpoints: N/A
+[No justification provided]
+```
+
+**Prevention:**
+
+✅ **Always provide ONE sentence justifying N/A:**
+
+```
+S2 - Private Endpoints: N/A
+Justification: Azure App Service does not natively support private endpoints 
+in the way Storage or Key Vault do. Private access via VNet integration 
+is handled separately (Q7/S1). Not applicable per Azure service architecture.
+```
+
+---
+
+### Failure 8: Scoring on Missing Required Files
+
+**What happens:** Model tries to score a criterion in a file that doesn't exist.
+
+Example error:
+```
+Q3 - Validation Blocks: PARTIAL
+Evidence: "Checked variables.tf and found 50% of enums have validation"
+[But wait — module has NO variables.tf at all]
+```
+
+**Prevention:**
+
+✅ **ALWAYS verify file existence first (from Step 3).**
+
+```
+Q5 - File Layout:
+
+Files retrieved in Step 3:
+  [ ] main.tf
+  [ ] variables.tf
+  [ ] outputs.tf
+  [ ] versions.tf
+  [ ] README.md
+
+My findings:
+  ✓ main.tf exists (lines 1-150)
+  ✗ variables.tf MISSING
+  ✓ outputs.tf exists (lines 1-40)
+  ✗ versions.tf MISSING
+  ✓ README.md exists
+
+Result: Q5 = FAIL (missing 2 of 4 required files)
+
+Now trying to score Q1 (Variable Naming):
+Since variables.tf MISSING → Q1 = FAIL or N/A?
+Decision: Q1 = FAIL (cannot name variables if file doesn't exist)
+```
+
+---
+
+## Summary: The Golden Rules
+
+1. **ALWAYS quote evidence** (line number + 2–3 lines of code)
+2. **ALWAYS report totals** (X out of Y found / checked)
+3. **NEVER make up code** (if NOT FOUND, say so explicitly)
+4. **ALWAYS follow scoring tables exactly** (do not interpret or guess)
+5. **ALWAYS justify N/A** (one sentence explaining why not applicable)
+6. **NEVER score a criterion if required file is missing** (use FAIL or skip that criterion)
+7. **ALWAYS verify context** (don't match on substrings alone)
+8. **ALWAYS scan entire files** (report line counts / totals scanned)
