@@ -33,7 +33,7 @@ patterns from any one team.
 ## Process Overview
 
 ```
-1. Context Gathering     ← Analyse existing modules; derive canonical standard
+1. Context Gathering     ← Catalogue ALL modules → classify → deep-review → derive standard
 2. Provider Docs         ← Retrieve resource schema from Terraform Registry
 3. Threat Model Review   ← Map security controls to code constraints
 4. Code Generation       ← Write compliant .tf files grounded in schema + standard
@@ -43,59 +43,121 @@ patterns from any one team.
 
 ---
 
-## Phase 1 — Context Gathering
+## Phase 1 — Module Catalogue Review
 
-### 1a. Sample Existing Modules
+Phase 1 is a structured audit of the entire private module catalogue. It has four stages:
+catalogue all modules → classify into buckets → deep-review each Azure service module →
+derive the canonical standard. The full review is designed to run using low-cost Copilot
+models following the instructions in
+[`docs/phase1-catalogue-review.md`](phase1-catalogue-review.md).
 
-Use `search_private_modules` to list the catalogue, then retrieve details for
-**3–5 representative modules** spanning different teams and services:
+### 1a. Catalogue All azurerm Modules
 
-```
-@terraform-expert search_private_modules org=<your-org>
-@terraform-expert get_private_module_details name=<module-name> org=<your-org>
-```
-
-Select modules that cover different resource types (networking, storage, compute) and
-that were authored by different teams where possible. The goal is to capture the full
-range of styles present in the catalogue.
-
-### 1b. Analyse and Compare
-
-For each retrieved module, extract and compare:
-
-| Dimension | What to look for |
-|-----------|-----------------|
-| **Variable naming** | snake_case, abbreviations used, prefixes (e.g. `enable_`, `is_`) |
-| **Variable structure** | Types used (`string`, `object`, `map(string)`), nullable, optional |
-| **Validation blocks** | Presence, regex patterns, error message quality |
-| **Output naming** | Suffixes (`_id`, `_name`, `_connection_string`) |
-| **File layout** | Whether `versions.tf` is separate, README format, example presence |
-| **Tagging** | `tags` variable type, merge strategy, required vs optional tags |
-| **`required_providers`** | Version constraint style and azurerm version pinned |
-| **Optional resources** | `count`-based vs `for_each`-based vs `dynamic` blocks |
-| **Lifecycle rules** | `prevent_destroy`, `ignore_changes` usage |
-
-### 1c. Derive the Canonical Standard
-
-From the analysis, produce a normalised standard that:
-
-1. **Takes the best pattern** for each dimension — not the most common, but the most correct
-2. **Fills gaps** using [HashiCorp Module Standards](https://developer.hashicorp.com/terraform/language/modules/develop/structure)
-   and the [Azure Naming Convention](https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/azure-best-practices/resource-naming)
-3. **Rejects inconsistent patterns** that would conflict across modules (e.g. if only one module
-   uses `count`, standardise on `for_each` or `dynamic` blocks for optional resources)
-
-Document the derived standard at the top of your working context before proceeding. Example:
+Do **not** sample a subset. Retrieve the complete list of modules from the private TFC
+registry before doing anything else:
 
 ```
-Canonical standard (derived from 4 modules):
-- Variable names: snake_case, no abbreviations for clarity, enable_ prefix for bool toggles
-- Tags: var.tags = map(string), merged with local required_tags (cost_centre, environment)
-- Outputs: always suffix _id, _name, _fqdn as applicable — never expose secrets directly
-- required_providers: azurerm ~> 3.90, exact minor pin
-- Optional resources: dynamic blocks preferred over count for readability
-- Validation: all string vars that accept enum values must have validation block
+@terraform-expert search_private_modules org=<your-org> provider=azurerm
 ```
+
+For each module returned, record:
+
+| Field | Source |
+|-------|--------|
+| Module name | TFC registry response |
+| Latest version | TFC registry response |
+| GitHub repo URL | TFC registry metadata (VCS link) |
+| Description | TFC registry response |
+| Published by | TFC registry response |
+
+This becomes the **master catalogue** — every subsequent step operates on this list.
+
+### 1b. Classify: Utility vs Azure Service
+
+For each module in the catalogue, classify it as one of:
+
+| Bucket | Criteria |
+|--------|---------|
+| **Azure Service** | Wraps a specific Azure resource type (e.g. storage account, Key Vault, AKS). The primary output is one or more `azurerm_*` resources. |
+| **Utility** | Provides shared logic, naming helpers, tag generators, policy assignments, or composes multiple Azure Service modules. Does not directly create a single Azure service. |
+
+Modules in the **Utility** bucket are recorded but not deep-reviewed in Phase 1. Only
+**Azure Service** modules proceed to Phase 1c.
+
+### 1c. Deep Review — Azure Service Modules
+
+Each Azure Service module must be reviewed against **two sets of criteria**: security
+controls and code quality. The review requires reading the actual module source code from
+GitHub — the TFC registry metadata alone is insufficient.
+
+For each module:
+1. Retrieve the GitHub repo URL from the TFC registry record
+2. Clone or fetch the repository contents (or use the GitHub API to read files)
+3. Score the module against every criterion below
+
+#### Security Controls Scorecard
+
+| # | Control | Pass condition | Fail condition |
+|---|---------|---------------|---------------|
+| S1 | **Network isolation** | Module creates or requires a subnet/VNet integration, NSG, or service endpoint. Network access is not unrestricted by default. | No network configuration. Public access defaults to open with no variable to restrict it. |
+| S2 | **Private endpoints** | Module includes an `azurerm_private_endpoint` resource or accepts a `private_endpoint_subnet_id` variable that is used to create one. | No private endpoint support. Service is reachable over public internet with no mitigation. |
+| S3 | **Public access blocked** | Public network access is disabled by default (`public_network_access_enabled = false` or equivalent). If public access is optional, it must be `false` by default and guarded by a validation block. | Public access is enabled by default or there is no variable to control it. |
+| S4 | **Managed identity** | Module configures a system-assigned or user-assigned managed identity (`identity` block) for the resource. Cross-service authentication uses managed identity, not connection strings or API keys stored in config. | No identity block. Authentication to dependent services relies on shared secrets or connection strings passed as variables. |
+| S5 | **Key Vault integration** | Secrets (connection strings, keys, passwords) are stored in Azure Key Vault. Module either writes secrets to Key Vault or accepts Key Vault references (`@Microsoft.KeyVault(...)`) rather than plaintext values. | Secrets are passed as plaintext Terraform variables or hardcoded. No Key Vault reference pattern. |
+
+Score each control: **Pass / Partial / Fail / N/A** (N/A only when the control is
+architecturally irrelevant to the service, e.g. S2 for a purely internal service mesh).
+
+#### Code Quality Scorecard
+
+| # | Dimension | Pass condition | Fail condition |
+|---|-----------|---------------|---------------|
+| Q1 | **Variable naming** | Consistent snake_case. Boolean toggles use `enable_` prefix. No unexplained abbreviations. | Mixed conventions, camelCase, or single-letter variables. |
+| Q2 | **Variable completeness** | Every variable has `type`, `description`, and either a `default` or is explicitly required. | Variables missing `description` or `type`. |
+| Q3 | **Validation blocks** | All string variables accepting enum values have `validation` blocks with meaningful `error_message`. | Enum-accepting variables lack validation. Invalid values would only be caught at plan time with cryptic provider errors. |
+| Q4 | **Output completeness** | Exports `id` and `name` of every primary resource. Connection endpoints exported where applicable. No sensitive values exported in plaintext. | Missing `id` or `name`. Sensitive values (keys, passwords) exported without `sensitive = true`. |
+| Q5 | **File layout** | `main.tf`, `variables.tf`, `outputs.tf`, `versions.tf` all present and used correctly. No logic mixed into `outputs.tf`. | Files missing or responsibilities mixed (e.g. variables defined in `main.tf`). |
+| Q6 | **Provider version pin** | `required_providers` block present with azurerm pinned to at least a minor version (e.g. `~> 3.90`). | No version pin, or pinned only to a major (`~> 3.0`), allowing unexpected breaking changes. |
+| Q7 | **Tagging** | `tags` variable of `type = map(string)` present. Module merges caller tags with required internal tags (e.g. `managed_by`, `module`). | No `tags` variable, or tags not merged with required internal tags. |
+| Q8 | **`for_each` / `dynamic` usage** | Optional sub-resources use `dynamic` blocks or `for_each`. No use of `count` for boolean optional resources. | `count = var.enable_X ? 1 : 0` pattern used for optional resources. |
+
+#### README and Examples Scorecard
+
+| # | Dimension | Pass condition | Fail condition |
+|---|-----------|---------------|---------------|
+| R1 | **README present** | `README.md` exists at the module root. | No README. |
+| R2 | **Description accurate** | The description matches what the module actually creates. No stale copy-paste from another module. | Description refers to a different service or is generic/empty. |
+| R3 | **Inputs table** | All variables listed with correct types, descriptions, and whether required or optional. | Inputs table missing, incomplete, or shows wrong types/descriptions compared to `variables.tf`. |
+| R4 | **Outputs table** | All outputs listed with descriptions. | Outputs table missing or lists outputs that do not exist in `outputs.tf`. |
+| R5 | **Usage example present** | At least one `module` block example in README showing minimum required variables. | No usage example. |
+| R6 | **Usage example accurate** | The example uses the correct module source path, correct variable names, and would work without modification (excluding real values). | Example uses wrong variable names, missing required variables, or references a module path that does not match the registry entry. |
+| R7 | **Security controls documented** | README has a section explaining what security controls the module enforces and what the caller must provide. | No mention of security posture, private endpoints, managed identity, or network controls. |
+
+### 1d. Derive the Canonical Standard
+
+After completing all individual module reviews, aggregate the results to produce the
+**canonical standard** used when generating new modules.
+
+The process:
+
+1. **Identify consensus patterns** — where ≥ 75% of modules use the same pattern, that
+   pattern is adopted as standard
+2. **Select the best non-consensus pattern** — where patterns differ, choose the most
+   correct implementation (not the most common), documenting why
+3. **Fill remaining gaps** from HashiCorp Module Standards and the Azure CAF naming guide
+4. **Record failures as anti-patterns** — explicitly list the patterns that were found and
+   rejected, so new module generation avoids them
+
+The output of Phase 1 is a structured document with two sections:
+
+**Section A — Catalogue Summary**: table of all modules with their bucket classification
+and scorecard results (pass/partial/fail per criterion).
+
+**Section B — Canonical Standard**: the normalised coding and security standard derived
+from the best patterns observed, with explicit anti-pattern list.
+
+> See [`docs/phase1-catalogue-review.md`](phase1-catalogue-review.md) for the detailed
+> step-by-step instructions designed for execution by low-cost Copilot models.
 
 ---
 
@@ -315,12 +377,16 @@ Use these prompts when invoking `@terraform-expert` for each phase.
 ### Phase 1 — Context Gathering
 
 ```
-@terraform-expert Retrieve the following modules from the private registry and analyse
-them for naming conventions, variable patterns, output patterns, and tagging strategy:
-<list module names>
+@terraform-expert Execute Phase 1 of the module acceleration process for org=<your-org>.
 
-Identify inconsistencies across modules and derive a canonical standard we will use
-for all new modules going forward. Document the standard explicitly.
+Step 1: Catalogue all azurerm modules in the private TFC registry.
+Step 2: Classify each module as "Azure Service" or "Utility".
+Step 3: For each Azure Service module, retrieve the GitHub repo and evaluate it
+        against the full scorecard in docs/phase1-catalogue-review.md.
+Step 4: Produce Section A (catalogue summary with scores) and Section B (canonical standard).
+
+Follow the detailed instructions in docs/phase1-catalogue-review.md exactly.
+Output the results as structured markdown.
 ```
 
 ### Phase 2 — Provider Docs
@@ -372,3 +438,4 @@ Before opening a PR for a new module:
 - [TFC Private Registry Docs](https://developer.hashicorp.com/terraform/cloud-docs/registry)
 - [checkov](https://www.checkov.io/) / [tfsec](https://aquasecurity.github.io/tfsec/)
 - Agent instructions: `agent/instructions.md`
+- [docs/phase1-catalogue-review.md](phase1-catalogue-review.md) — detailed Phase 1 review instructions (low-cost model ready)
