@@ -475,6 +475,63 @@ This document provides a framework for module acceleration. To tailor it to your
 
 ---
 
+## 🎯 TODO: Central Registry & Repository Locations
+
+To make this framework actionable, document where modules, repos, and workspaces are centrally managed:
+
+**Module Registry:**
+- [ ] TFC Private Registry URL or hostname
+- [ ] Module source naming convention (e.g. `company/service-name/azurerm`)
+- [ ] Module repository root directory (e.g. `terraform-modules/` or `modules/`)
+- [ ] Module versioning strategy (semantic versioning rules, tag naming pattern)
+- [ ] Module release process (who approves, approval SLA, changelog requirements)
+- [ ] Module deprecation process (sunset timeline, migration guidance)
+
+**Repository Locations:**
+- [ ] GitHub organization or Org URL (e.g. `github.com/company-terraform`)
+- [ ] Module repositories pattern/location (e.g. `terraform-{service}-module` naming)
+- [ ] Monorepo vs poly-repo strategy (all modules in one repo or separate repos per module?)
+- [ ] Default branch naming convention (e.g. `main`, `master`)
+- [ ] Branch protection rules and required reviews
+- [ ] Release tag format (e.g. `v1.2.3`, `release-1.2.3`)
+- [ ] GitHub teams with module maintenance permissions
+- [ ] Automated release/tagging workflow (if applicable)
+
+**HCP Terraform / Terraform Cloud:**
+- [ ] Organization name(s)
+- [ ] Workspace naming conventions (e.g. `{environment}-{service}`, `prod-storage-001`)
+- [ ] Default workspace structure (VCS integration, working directory, state backend)
+- [ ] HCP Terraform team structure and permissions model
+- [ ] Variable set locations (global vs workspace-scoped)
+- [ ] Policy-as-code (Sentinel) policy set repository location
+- [ ] Cost estimation and governance thresholds
+- [ ] Run triggers and auto-apply conditions
+
+**Artifact Management:**
+- [ ] Terraform lock file (.terraform.lock.hcl) — version controlled or generated?
+- [ ] State file backup strategy and location (S3, GCS, Azure Blob Storage)
+- [ ] State file retention and audit logging requirements
+- [ ] Plan artifacts storage (if captured for auditing)
+- [ ] Change log / audit trail for all module releases
+
+**Documentation & Knowledge Base:**
+- [ ] Central documentation site or wiki (Confluence, GitHub Pages, internal wiki)
+- [ ] Module usage examples repository location
+- [ ] Architecture decision records (ADRs) repository
+- [ ] Module troubleshooting runbook location
+- [ ] On-call escalation path for production incidents
+- [ ] Training/onboarding materials for new developers
+
+**Integration Points:**
+- [ ] Module validation/scanning tools (checkov, tfsec) enforcement location
+- [ ] CI/CD pipeline configuration repository
+- [ ] Secrets management backend (HashiCorp Vault, Azure Key Vault, AWS Secrets Manager)
+- [ ] Compliance scanning results dashboard or reporting location
+- [ ] Cost optimization alerts and reports location
+- [ ] Change notification channels (Slack, email, etc.)
+
+---
+
 ## Related Resources
 
 - [HashiCorp Module Development Standards](https://developer.hashicorp.com/terraform/language/modules/develop)
